@@ -5,7 +5,7 @@ const SYSTEM_PROMPT =
   "You are a kirana store assistant. Extract customer name and amount from the message. Reply ONLY in JSON like this: {customerName: 'Sharma ji', amount: 500, type: 'udhaar'} or {customerName: 'Sharma ji', amount: 200, type: 'wapas'} or {type: 'unknown'} if not relevant";
 
 const genAI = new GoogleGenerativeAI(env.geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
 function normalizeJsonText(rawText) {
   const cleaned = rawText.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
