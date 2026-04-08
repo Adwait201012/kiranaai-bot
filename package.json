@@ -1,0 +1,23 @@
+{
+  "name": "kiranaai-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp-native Kirana management bot backend",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "express",
+    "supabase",
+    "kirana"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.102.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0"
+  }
+}
