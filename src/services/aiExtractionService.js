@@ -13,10 +13,38 @@ function normalizeJsonText(rawText) {
     .replace(/:\s*'([^']*)'/g, ': "$1"');
 }
 
+function getJsonObjectText(rawText) {
+  const firstBrace = rawText.indexOf("{");
+  const lastBrace = rawText.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return rawText;
+  }
+  return rawText.slice(firstBrace, lastBrace + 1);
+}
+
+function fallbackExtract(messageText) {
+  const cleaned = String(messageText || "").trim().replace(/\s+/g, " ");
+  const match = cleaned.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s+(udhaar|wapas)$/i);
+  if (!match) {
+    return { type: "unknown" };
+  }
+
+  const customerName = match[1].trim();
+  const amount = Number(match[2]);
+  const type = match[3].toLowerCase();
+
+  if (!customerName || Number.isNaN(amount) || amount <= 0) {
+    return { type: "unknown" };
+  }
+
+  return { customerName, amount, type };
+}
+
 async function extractTransaction(messageText) {
   const completion = await client.chat.completions.create({
     model: "llama-3.1-8b-instant",
     temperature: 0,
+    response_format: { type: "json_object" },
     messages: [
       {
         role: "system",
@@ -31,13 +59,13 @@ async function extractTransaction(messageText) {
 
   const output = completion.choices?.[0]?.message?.content || "";
 
-  const normalized = normalizeJsonText(output);
+  const normalized = normalizeJsonText(getJsonObjectText(output));
   let parsed;
 
   try {
     parsed = JSON.parse(normalized);
   } catch {
-    return { type: "unknown" };
+    return fallbackExtract(messageText);
   }
 
   if (!parsed || typeof parsed !== "object") {
@@ -49,13 +77,13 @@ async function extractTransaction(messageText) {
     const amount = Number(parsed.amount);
 
     if (!customerName || Number.isNaN(amount) || amount <= 0) {
-      return { type: "unknown" };
+      return fallbackExtract(messageText);
     }
 
     return { customerName, amount, type: parsed.type };
   }
 
-  return { type: "unknown" };
+  return fallbackExtract(messageText);
 }
 
 module.exports = { extractTransaction };
