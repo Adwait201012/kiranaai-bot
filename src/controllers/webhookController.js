@@ -9,6 +9,10 @@ const {
   getAllPendingUdhaar,
 } = require("../services/udhaarService");
 const { sendTextMessage } = require("../services/whatsappService");
+const {
+  isAudioMedia,
+  transcribeTwilioAudio,
+} = require("../services/audioTranscriptionService");
 
 const verifyWebhook = (req, res) => {
   res.status(200).send("Twilio webhook is active");
@@ -126,7 +130,19 @@ async function receiveWebhook(req, res) {
 
   try {
     const ownerWaId = req.body?.From;
-    const text = req.body?.Body;
+    const incomingText = String(req.body?.Body || "").trim();
+    const mediaContentType = req.body?.MediaContentType0;
+    const mediaUrl = req.body?.MediaUrl0;
+
+    let text = incomingText;
+
+    if (isAudioMedia(mediaContentType) && mediaUrl) {
+      const transcribedText = await transcribeTwilioAudio({
+        mediaUrl,
+        mediaContentType,
+      });
+      text = transcribedText;
+    }
 
     if (!ownerWaId || !text) {
       return;
