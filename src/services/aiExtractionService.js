@@ -2,7 +2,7 @@ const Groq = require("groq-sdk");
 const env = require("../config/env");
 
 const SYSTEM_PROMPT =
-  "You are KiranaAI, a smart assistant for Indian kirana store owners. STRICT LANGUAGE RULE: detect the input language and keep output language exactly the same. Never switch languages. If owner says 'Sharma ji 500 udhaar' => language must be 'hinglish'. If owner says 'Sharma ji owes 500' => language must be 'english'. If owner says 'शर्मा जी का 500 उधार' => language must be 'hindi'. Classify intent into: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, UNKNOWN. Extract customerName, amount, phoneNumber where relevant. Reply ONLY in JSON: {intent: 'LOG_UDHAAR', customerName: 'Sharma ji', amount: 500, language: 'hindi'}";
+  "You are KiranaAI, a smart assistant for Indian kirana store owners. STRICT LANGUAGE RULE: Detect the language of the input message. If input is pure English (like 'Sharma ji owes 500' or 'hello'), reply ONLY in English. If input is pure Hindi (like 'शर्मा जी का उधार'), reply ONLY in Hindi. If input is Hinglish (like 'Sharma ji 500 udhaar' or 'namaste'), reply ONLY in Hinglish. NEVER mix languages. The reply language must be 100% identical to input language. Classify intent into: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, UNKNOWN. Extract customerName, amount, phoneNumber where relevant. Reply ONLY in JSON: {intent: 'LOG_UDHAAR', customerName: 'Sharma ji', amount: 500, language: 'hindi'}";
 
 const client = new Groq({ apiKey: env.groqApiKey });
 
@@ -41,7 +41,7 @@ const ALLOWED_INTENTS = new Set([
   "UNKNOWN",
 ]);
 const ALLOWED_LANGUAGES = new Set(["hindi", "hinglish", "english"]);
-const HINGLISH_HINT_WORDS = [
+const HINGLISH_HINT_WORDS = new Set([
   "udhaar",
   "udhar",
   "hisaab",
@@ -54,10 +54,18 @@ const HINGLISH_HINT_WORDS = [
   "ne",
   "ka",
   "ko",
+  "namaste",
+  "namaskar",
+  "pranam",
   "aji",
   "ajj",
   "aaj",
-];
+]);
+
+function getLatinWordTokens(text) {
+  const matches = String(text || "").toLowerCase().match(/[a-z]+/g);
+  return matches || [];
+}
 
 function inferLanguageFromText(messageText) {
   const text = String(messageText || "").trim();
@@ -70,8 +78,13 @@ function inferLanguageFromText(messageText) {
     return "hindi";
   }
 
-  const lowered = text.toLowerCase();
-  if (HINGLISH_HINT_WORDS.some((word) => lowered.includes(word))) {
+  const tokens = getLatinWordTokens(text);
+  if (tokens.length === 0) {
+    return "english";
+  }
+
+  const hasHinglishMarker = tokens.some((token) => HINGLISH_HINT_WORDS.has(token));
+  if (hasHinglishMarker) {
     return "hinglish";
   }
 
