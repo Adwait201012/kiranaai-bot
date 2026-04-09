@@ -68,10 +68,10 @@ function formatAmount(value) {
 async function handleTodayHisaab({ ownerWaId }) {
   const today = await getTodayHisaab();
   const replyText =
-    `📊 Aaj ka hisaab:\n` +
-    `💰 Naya udhaar: ₹${formatAmount(today.newUdhaar)}\n` +
-    `✅ Wapas mila: ₹${formatAmount(today.wapasReceived)}\n` +
-    `📌 Net udhaar aaj: ₹${formatAmount(today.netUdhaar)}`;
+    `Aaj ka hisaab:\n` +
+    `Naya udhaar: ₹${formatAmount(today.newUdhaar)}\n` +
+    `Wapas mila: ₹${formatAmount(today.wapasReceived)}\n` +
+    `Net udhaar aaj: ₹${formatAmount(today.netUdhaar)}`;
 
   await sendTextMessage({
     to: ownerWaId,
@@ -118,7 +118,7 @@ async function receiveWebhook(req, res) {
       const remainingTotal = await getCustomerUdhaarTotal({
         customerName: wapasQuery.customerName,
       });
-      const replyText = `✅ ${wapasQuery.customerName} ne ₹${wapasQuery.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
+      const replyText = `${wapasQuery.customerName} ne ₹${wapasQuery.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
       await sendTextMessage({
         to: ownerWaId,
         text: replyText,
@@ -137,7 +137,7 @@ async function receiveWebhook(req, res) {
         amount: parsed.amount,
       });
 
-      const replyText = `✅ ${parsed.customerName} ka ₹${parsed.amount} udhaar logged!`;
+      const replyText = `${parsed.customerName} ka ₹${parsed.amount} udhaar logged!`;
       await sendTextMessage({
         to: ownerWaId,
         text: replyText,
@@ -153,7 +153,7 @@ async function receiveWebhook(req, res) {
     const remainingTotal = await getCustomerUdhaarTotal({
       customerName: parsed.customerName,
     });
-    const replyText = `✅ ${parsed.customerName} ne ₹${parsed.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
+    const replyText = `${parsed.customerName} ne ₹${parsed.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
     await sendTextMessage({
       to: ownerWaId,
       text: replyText,
