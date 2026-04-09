@@ -103,18 +103,18 @@ async function saveCustomerPhone({ customerName, phone }) {
   if (existing?.id) {
     const { error: updateError } = await supabase
       .from("customers")
-      .update({ customer_name: customerName, phone })
+      .update({ customer_name: customerName, phone_number: phone })
       .eq("id", existing.id);
 
     if (updateError) {
       throw new Error(`Supabase update failed: ${updateError.message}`);
     }
-    return { id: existing.id, customer_name: customerName, phone };
+    return { id: existing.id, customer_name: customerName, phone_number: phone };
   }
 
   const { data, error } = await supabase
     .from("customers")
-    .insert([{ customer_name: customerName, phone }])
+    .insert([{ customer_name: customerName, phone_number: phone }])
     .select()
     .single();
 
@@ -128,7 +128,7 @@ async function saveCustomerPhone({ customerName, phone }) {
 async function getCustomerPhone({ customerName }) {
   const { data, error } = await supabase
     .from("customers")
-    .select("phone")
+    .select("phone_number")
     .ilike("customer_name", customerName)
     .limit(1)
     .maybeSingle();
@@ -137,7 +137,7 @@ async function getCustomerPhone({ customerName }) {
     throw new Error(`Supabase fetch failed: ${error.message}`);
   }
 
-  return data?.phone || null;
+  return data?.phone_number || null;
 }
 
 module.exports = {
