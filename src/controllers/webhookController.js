@@ -58,7 +58,7 @@ function parseWapasMessage(text) {
 
 function isTodayHisaabQuery(text) {
   const cleaned = String(text || "").trim().toLowerCase().replace(/\s+/g, " ");
-  return cleaned === "aaj ka hisaab";
+  return cleaned.includes("aaj ka hisaab") || cleaned.includes("aaj ka report");
 }
 
 function formatAmount(value) {
