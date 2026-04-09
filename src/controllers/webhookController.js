@@ -25,6 +25,36 @@ function parseUdhaarTotalQuery(text) {
   return null;
 }
 
+function parseWapasMessage(text) {
+  const cleaned = String(text || "").trim().replace(/\s+/g, " ");
+
+  const wapasMatch = cleaned.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s+wapas$/i);
+  if (wapasMatch) {
+    const amount = Number(wapasMatch[2]);
+    if (Number.isNaN(amount) || amount <= 0) {
+      return null;
+    }
+    return {
+      customerName: wapasMatch[1].trim(),
+      amount,
+    };
+  }
+
+  const diyaMatch = cleaned.match(/^(.+?)\s+ne\s+(\d+(?:\.\d+)?)\s+diya$/i);
+  if (diyaMatch) {
+    const amount = Number(diyaMatch[2]);
+    if (Number.isNaN(amount) || amount <= 0) {
+      return null;
+    }
+    return {
+      customerName: diyaMatch[1].trim(),
+      amount,
+    };
+  }
+
+  return null;
+}
+
 async function receiveWebhook(req, res) {
   // Twilio expects quick 200 response to acknowledge webhook.
   res.status(200).send("ok");
@@ -43,6 +73,23 @@ async function receiveWebhook(req, res) {
         customerName: totalQuery.customerName,
       });
       const replyText = `${totalQuery.customerName} ka kul udhaar: ₹${total} hai`;
+      await sendTextMessage({
+        to: ownerWaId,
+        text: replyText,
+      });
+      return;
+    }
+
+    const wapasQuery = parseWapasMessage(text);
+    if (wapasQuery) {
+      await logWapas({
+        customerName: wapasQuery.customerName,
+        amount: wapasQuery.amount,
+      });
+      const remainingTotal = await getCustomerUdhaarTotal({
+        customerName: wapasQuery.customerName,
+      });
+      const replyText = `✅ ${wapasQuery.customerName} ne ₹${wapasQuery.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
       await sendTextMessage({
         to: ownerWaId,
         text: replyText,
@@ -74,7 +121,10 @@ async function receiveWebhook(req, res) {
       amount: parsed.amount,
     });
 
-    const replyText = `✅ ${parsed.customerName} ka ₹${parsed.amount} wapas logged!`;
+    const remainingTotal = await getCustomerUdhaarTotal({
+      customerName: parsed.customerName,
+    });
+    const replyText = `✅ ${parsed.customerName} ne ₹${parsed.amount} wapas diya. Baaki udhaar: ₹${remainingTotal}`;
     await sendTextMessage({
       to: ownerWaId,
       text: replyText,
