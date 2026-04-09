@@ -2,5 +2,5 @@ const app = require("./app");
 const env = require("./config/env");
 
 app.listen(env.port, () => {
-  console.log(`KiranaAI bot server running on port ${env.port}`);
+  console.log(`VyaparAI bot server running on port ${env.port}`);
 });

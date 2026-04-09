@@ -53,7 +53,7 @@ function buildText(language, key, params = {}) {
   const templates = {
     hindi: {
       GREETING_INTRO:
-        "नमस्ते! मैं KiranaAI हूं, आपका स्मार्ट किराना असिस्टेंट! 🤖\n" +
+        "नमस्ते! मैं VyaparAI हूं, आपका स्मार्ट किराना असिस्टेंट! 🤖\n" +
         "मैं आपकी इन चीजों में मदद कर सकता हूं:\n\n" +
         "उधार लॉग - 'शर्मा जी 500 उधार'\n" +
         "उधार चेक - 'शर्मा जी कितना उधार'\n" +
@@ -84,7 +84,7 @@ function buildText(language, key, params = {}) {
     },
     hinglish: {
       GREETING_INTRO:
-        "Namaste! Main KiranaAI hun, aapka smart kirana assistant! 🤖\n" +
+        "Namaste! Main VyaparAI hun, aapka smart kirana assistant! 🤖\n" +
         "Main aapki in cheezon mein help kar sakta hun:\n\n" +
         "Udhaar Log - 'Sharma ji 500 udhaar'\n" +
         "Udhaar Check - 'Sharma ji kitna udhaar'\n" +
@@ -115,7 +115,7 @@ function buildText(language, key, params = {}) {
     },
     english: {
       GREETING_INTRO:
-        "Hello! I am KiranaAI, your smart kirana assistant! 🤖\n" +
+        "Hello! I am VyaparAI, your smart kirana assistant! 🤖\n" +
         "I can help you with:\n\n" +
         "Log Udhaar - 'Sharma ji owes 500'\n" +
         "Check Udhaar - 'How much udhaar for Sharma ji?'\n" +

@@ -1,4 +1,4 @@
-## KiranaAI WhatsApp Bot (Backend Only)
+## VyaparAI WhatsApp Bot (Backend Only)
 
 WhatsApp-native Kirana store management bot.
 No website, no frontend.

@@ -25,7 +25,7 @@ async function transcribeTwilioAudio({ mediaUrl, mediaContentType }) {
   const ext = getFileExtension(mediaContentType);
   const tempFilePath = path.join(
     os.tmpdir(),
-    `kiranaai-audio-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
+    `vyaparai-audio-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
   );
 
   try {
