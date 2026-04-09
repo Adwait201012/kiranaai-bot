@@ -65,6 +65,20 @@ function formatAmount(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
+async function handleTodayHisaab({ ownerWaId }) {
+  const today = await getTodayHisaab();
+  const replyText =
+    `📊 Aaj ka hisaab:\n` +
+    `💰 Naya udhaar: ₹${formatAmount(today.newUdhaar)}\n` +
+    `✅ Wapas mila: ₹${formatAmount(today.wapasReceived)}\n` +
+    `📌 Net udhaar aaj: ₹${formatAmount(today.netUdhaar)}`;
+
+  await sendTextMessage({
+    to: ownerWaId,
+    text: replyText,
+  });
+}
+
 async function receiveWebhook(req, res) {
   // Twilio expects quick 200 response to acknowledge webhook.
   res.status(200).send("ok");
@@ -78,16 +92,7 @@ async function receiveWebhook(req, res) {
     }
 
     if (isTodayHisaabQuery(text)) {
-      const today = await getTodayHisaab();
-      const replyText =
-        `📊 Aaj ka hisaab:\n` +
-        `💰 Naya udhaar: ₹${formatAmount(today.newUdhaar)}\n` +
-        `✅ Wapas mila: ₹${formatAmount(today.wapasReceived)}\n` +
-        `📌 Net udhaar aaj: ₹${formatAmount(today.netUdhaar)}`;
-      await sendTextMessage({
-        to: ownerWaId,
-        text: replyText,
-      });
+      await handleTodayHisaab({ ownerWaId });
       return;
     }
 
