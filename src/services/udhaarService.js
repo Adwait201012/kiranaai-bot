@@ -88,4 +88,63 @@ async function getTodayHisaab() {
   };
 }
 
-module.exports = { logUdhaar, logWapas, getCustomerUdhaarTotal, getTodayHisaab };
+async function saveCustomerPhone({ customerName, phone }) {
+  const { data: existing, error: findError } = await supabase
+    .from("customers")
+    .select("id")
+    .ilike("customer_name", customerName)
+    .limit(1)
+    .maybeSingle();
+
+  if (findError) {
+    throw new Error(`Supabase fetch failed: ${findError.message}`);
+  }
+
+  if (existing?.id) {
+    const { error: updateError } = await supabase
+      .from("customers")
+      .update({ customer_name: customerName, phone })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      throw new Error(`Supabase update failed: ${updateError.message}`);
+    }
+    return { id: existing.id, customer_name: customerName, phone };
+  }
+
+  const { data, error } = await supabase
+    .from("customers")
+    .insert([{ customer_name: customerName, phone }])
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Supabase insert failed: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function getCustomerPhone({ customerName }) {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("phone")
+    .ilike("customer_name", customerName)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Supabase fetch failed: ${error.message}`);
+  }
+
+  return data?.phone || null;
+}
+
+module.exports = {
+  logUdhaar,
+  logWapas,
+  getCustomerUdhaarTotal,
+  getTodayHisaab,
+  saveCustomerPhone,
+  getCustomerPhone,
+};

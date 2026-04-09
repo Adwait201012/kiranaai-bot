@@ -4,6 +4,8 @@ const {
   logWapas,
   getCustomerUdhaarTotal,
   getTodayHisaab,
+  saveCustomerPhone,
+  getCustomerPhone,
 } = require("../services/udhaarService");
 const { sendTextMessage } = require("../services/whatsappService");
 
@@ -56,6 +58,37 @@ function parseWapasMessage(text) {
   return null;
 }
 
+function parseCustomerPhoneMessage(text) {
+  const cleaned = String(text || "").trim().replace(/\s+/g, " ");
+  const match = cleaned.match(/^(.+?)\s+number\s+([+0-9]{10,15})$/i);
+  if (!match) {
+    return null;
+  }
+
+  const customerName = match[1].trim();
+  const phone = match[2].trim();
+  if (!customerName || !phone) {
+    return null;
+  }
+
+  return { customerName, phone };
+}
+
+function parseReminderMessage(text) {
+  const cleaned = String(text || "").trim().replace(/\s+/g, " ");
+  const match = cleaned.match(/^(.+?)\s+ko\s+remind\s+karo$/i);
+  if (!match) {
+    return null;
+  }
+
+  const customerName = match[1].trim();
+  if (!customerName) {
+    return null;
+  }
+
+  return { customerName };
+}
+
 function isTodayHisaabQuery(text) {
   const cleaned = String(text || "").trim().toLowerCase().replace(/\s+/g, " ");
   return cleaned.includes("aaj ka hisaab") || cleaned.includes("aaj ka report");
@@ -63,6 +96,19 @@ function isTodayHisaabQuery(text) {
 
 function formatAmount(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function normalizeCustomerPhone(phone) {
+  const raw = String(phone || "").trim();
+  if (raw.startsWith("+")) {
+    return raw;
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `+91${digits}`;
+  }
+  return `+${digits}`;
 }
 
 async function handleTodayHisaab({ ownerWaId }) {
@@ -93,6 +139,55 @@ async function receiveWebhook(req, res) {
 
     if (isTodayHisaabQuery(text)) {
       await handleTodayHisaab({ ownerWaId });
+      return;
+    }
+
+    const customerPhoneInfo = parseCustomerPhoneMessage(text);
+    if (customerPhoneInfo) {
+      await saveCustomerPhone({
+        customerName: customerPhoneInfo.customerName,
+        phone: normalizeCustomerPhone(customerPhoneInfo.phone),
+      });
+
+      await sendTextMessage({
+        to: ownerWaId,
+        text: `${customerPhoneInfo.customerName} ka number save ho gaya.`,
+      });
+      return;
+    }
+
+    const reminderQuery = parseReminderMessage(text);
+    if (reminderQuery) {
+      const customerPhone = await getCustomerPhone({
+        customerName: reminderQuery.customerName,
+      });
+
+      if (!customerPhone) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: `${reminderQuery.customerName} ka number nahi mila. Pehle "${reminderQuery.customerName} number 9876543210" bhejein.`,
+        });
+        return;
+      }
+
+      const total = await getCustomerUdhaarTotal({
+        customerName: reminderQuery.customerName,
+      });
+
+      const reminderText =
+        `Namaste ${reminderQuery.customerName} ji! ` +
+        `Aapka hamare shop mein ₹${formatAmount(total)} udhaar baaki hai. ` +
+        `Kripya jald chukta karein. Dhanyawad!`;
+
+      await sendTextMessage({
+        to: customerPhone,
+        text: reminderText,
+      });
+
+      await sendTextMessage({
+        to: ownerWaId,
+        text: `${reminderQuery.customerName} ko reminder bhej diya gaya.`,
+      });
       return;
     }
 
