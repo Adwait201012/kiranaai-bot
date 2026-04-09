@@ -140,6 +140,36 @@ async function getCustomerPhone({ customerName }) {
   return data?.phone_number || null;
 }
 
+async function getAllPendingUdhaar() {
+  const { data, error } = await supabase
+    .from("udhaar_logs")
+    .select("customer_name,amount");
+
+  if (error) {
+    throw new Error(`Supabase fetch failed: ${error.message}`);
+  }
+
+  const totalsMap = new Map();
+  for (const row of data || []) {
+    const name = String(row.customer_name || "").trim();
+    if (!name) {
+      continue;
+    }
+    const amount = Number(row.amount || 0);
+    const current = totalsMap.get(name) || 0;
+    totalsMap.set(name, current + amount);
+  }
+
+  const customers = Array.from(totalsMap.entries())
+    .map(([customerName, total]) => ({ customerName, total }))
+    .filter((item) => item.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  const grandTotal = customers.reduce((sum, item) => sum + item.total, 0);
+
+  return { customers, grandTotal };
+}
+
 module.exports = {
   logUdhaar,
   logWapas,
@@ -147,4 +177,5 @@ module.exports = {
   getTodayHisaab,
   saveCustomerPhone,
   getCustomerPhone,
+  getAllPendingUdhaar,
 };

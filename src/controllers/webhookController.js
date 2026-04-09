@@ -6,6 +6,7 @@ const {
   getTodayHisaab,
   saveCustomerPhone,
   getCustomerPhone,
+  getAllPendingUdhaar,
 } = require("../services/udhaarService");
 const { sendTextMessage } = require("../services/whatsappService");
 
@@ -94,6 +95,11 @@ function isTodayHisaabQuery(text) {
   return cleaned.includes("aaj ka hisaab") || cleaned.includes("aaj ka report");
 }
 
+function isAllUdhaarQuery(text) {
+  const cleaned = String(text || "").trim().toLowerCase().replace(/\s+/g, " ");
+  return cleaned.includes("sabka udhaar dikhao") || cleaned.includes("all udhaar");
+}
+
 function formatAmount(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
@@ -139,6 +145,32 @@ async function receiveWebhook(req, res) {
 
     if (isTodayHisaabQuery(text)) {
       await handleTodayHisaab({ ownerWaId });
+      return;
+    }
+
+    if (isAllUdhaarQuery(text)) {
+      const result = await getAllPendingUdhaar();
+
+      if (!result.customers.length) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: "Sabka udhaar:\nKoi pending udhaar nahi hai.\nTotal: Rs0",
+        });
+        return;
+      }
+
+      const lines = result.customers.map(
+        (item) => `${item.customerName}: Rs${formatAmount(item.total)}`,
+      );
+      const replyText =
+        `Sabka udhaar:\n` +
+        `${lines.join("\n")}\n` +
+        `Total: Rs${formatAmount(result.grandTotal)}`;
+
+      await sendTextMessage({
+        to: ownerWaId,
+        text: replyText,
+      });
       return;
     }
 
