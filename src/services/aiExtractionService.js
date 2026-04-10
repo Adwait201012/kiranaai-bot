@@ -95,13 +95,18 @@ function detectLanguageFromText(messageText) {
 }
 
 function parseNumberAndUnit(text) {
-  const compact = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?/i);
+  const compact = text.match(
+    /(\d+(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?\s*([^\s]+)?/i,
+  );
   if (!compact) {
-    return { quantity: null, unit: "" };
+    return { quantity: null, unit: "pieces" };
   }
 
   const quantity = Number(compact[1]);
-  const unit = String(compact[2] || "").toLowerCase();
+  const candidateUnit = String(compact[2] || compact[3] || "").toLowerCase().trim();
+  const unit = /^(aaya|aayi|aaye|got|received|added|add)$/.test(candidateUnit)
+    ? "pieces"
+    : candidateUnit || "pieces";
   return {
     quantity: Number.isFinite(quantity) ? quantity : null,
     unit,
@@ -154,7 +159,20 @@ function parseInventoryPart(partText) {
   if (qLast) {
     const itemName = cleanupItemName(qLast[1]);
     const quantity = Number(qLast[2]);
-    const unit = String(qLast[3] || "").toLowerCase();
+    const unit = String(qLast[3] || "pieces").toLowerCase();
+    if (itemName && Number.isFinite(quantity) && quantity > 0) {
+      return { itemName, quantity, unit };
+    }
+  }
+
+  const anyNumber = part.match(/(.+?)\s+(\d+(?:\.\d+)?)(?:\s+([^\s]+))?/i);
+  if (anyNumber) {
+    const itemName = cleanupItemName(anyNumber[1]);
+    const quantity = Number(anyNumber[2]);
+    const candidateUnit = String(anyNumber[3] || "").toLowerCase().trim();
+    const unit = /^(aaya|aayi|aaye|got|received|added|add)$/.test(candidateUnit)
+      ? "pieces"
+      : candidateUnit || "pieces";
     if (itemName && Number.isFinite(quantity) && quantity > 0) {
       return { itemName, quantity, unit };
     }
@@ -162,7 +180,7 @@ function parseInventoryPart(partText) {
 
   const fallbackName = cleanupItemName(part);
   if (fallbackName) {
-    return { itemName: fallbackName, quantity: 1, unit: "unit" };
+    return { itemName: fallbackName, quantity: 1, unit: "pieces" };
   }
 
   return null;
@@ -235,7 +253,7 @@ function inferInventoryFromText(messageText) {
     itemName,
     quantity,
     unit,
-    items: itemName ? [{ itemName, quantity: quantity || 1, unit: unit || "unit" }] : [],
+    items: itemName ? [{ itemName, quantity: quantity || 1, unit: unit || "pieces" }] : [],
   };
 }
 
