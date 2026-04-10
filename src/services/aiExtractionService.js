@@ -70,7 +70,7 @@ function getLatinWordTokens(text) {
   return matches || [];
 }
 
-function inferLanguageFromText(messageText) {
+function detectLanguageFromText(messageText) {
   const text = String(messageText || "").trim();
   if (!text) {
     return "hinglish";
@@ -138,7 +138,7 @@ async function detectIntent(messageText) {
   const quantity = Number(parsed.quantity);
   const unit = String(parsed.unit || "").trim();
   const modelLanguage = String(parsed.language || "hinglish").toLowerCase().trim();
-  const strictLanguage = inferLanguageFromText(messageText);
+  const strictLanguage = detectLanguageFromText(messageText);
 
   return {
     intent,
@@ -157,4 +157,4 @@ async function detectIntent(messageText) {
   };
 }
 
-module.exports = { detectIntent };
+module.exports = { detectIntent, detectLanguageFromText };
