@@ -170,6 +170,89 @@ async function getAllPendingUdhaar() {
   return { customers, grandTotal };
 }
 
+async function addInventoryStock({ itemName, quantity, unit }) {
+  const normalizedItemName = String(itemName || "").trim();
+  const normalizedUnit = String(unit || "").trim();
+
+  const { data: existing, error: findError } = await supabase
+    .from("inventory")
+    .select("id,item_name,quantity,unit")
+    .ilike("item_name", normalizedItemName)
+    .limit(1)
+    .maybeSingle();
+
+  if (findError) {
+    throw new Error(`Supabase fetch failed: ${findError.message}`);
+  }
+
+  if (existing?.id) {
+    const nextQuantity = Number(existing.quantity || 0) + Number(quantity || 0);
+    const { data, error: updateError } = await supabase
+      .from("inventory")
+      .update({
+        item_name: existing.item_name || normalizedItemName,
+        quantity: nextQuantity,
+        unit: normalizedUnit || existing.unit || "",
+      })
+      .eq("id", existing.id)
+      .select("item_name,quantity,unit")
+      .single();
+
+    if (updateError) {
+      throw new Error(`Supabase update failed: ${updateError.message}`);
+    }
+
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("inventory")
+    .insert([
+      {
+        item_name: normalizedItemName,
+        quantity: Number(quantity || 0),
+        unit: normalizedUnit,
+      },
+    ])
+    .select("item_name,quantity,unit")
+    .single();
+
+  if (error) {
+    throw new Error(`Supabase insert failed: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function getInventoryStock({ itemName }) {
+  const normalizedItemName = String(itemName || "").trim();
+  const { data, error } = await supabase
+    .from("inventory")
+    .select("item_name,quantity,unit")
+    .ilike("item_name", normalizedItemName)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Supabase fetch failed: ${error.message}`);
+  }
+
+  return data || null;
+}
+
+async function getAllInventoryStock() {
+  const { data, error } = await supabase
+    .from("inventory")
+    .select("item_name,quantity,unit")
+    .order("item_name", { ascending: true });
+
+  if (error) {
+    throw new Error(`Supabase fetch failed: ${error.message}`);
+  }
+
+  return data || [];
+}
+
 module.exports = {
   logUdhaar,
   logWapas,
@@ -178,4 +261,7 @@ module.exports = {
   saveCustomerPhone,
   getCustomerPhone,
   getAllPendingUdhaar,
+  addInventoryStock,
+  getInventoryStock,
+  getAllInventoryStock,
 };

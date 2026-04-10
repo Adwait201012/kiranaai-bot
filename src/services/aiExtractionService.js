@@ -2,7 +2,7 @@ const Groq = require("groq-sdk");
 const env = require("../config/env");
 
 const SYSTEM_PROMPT =
-  "You are VyaparAI, a smart assistant for Indian kirana store owners. STRICT LANGUAGE RULE: Detect the language of the input message. If input is pure English (like 'Sharma ji owes 500' or 'hello'), reply ONLY in English. If input is pure Hindi (like 'शर्मा जी का उधार'), reply ONLY in Hindi. If input is Hinglish (like 'Sharma ji 500 udhaar' or 'namaste'), reply ONLY in Hinglish. NEVER mix languages. The reply language must be 100% identical to input language. Classify intent into: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, UNKNOWN. Extract customerName, amount, phoneNumber where relevant. Reply ONLY in JSON: {intent: 'LOG_UDHAAR', customerName: 'Sharma ji', amount: 500, language: 'hindi'}";
+  "You are VyaparAI, a smart assistant for Indian kirana store owners. STRICT LANGUAGE RULE: Detect the language of the input message. If input is pure English (like 'Sharma ji owes 500' or 'hello'), reply ONLY in English. If input is pure Hindi (like 'शर्मा जी का उधार'), reply ONLY in Hindi. If input is Hinglish (like 'Sharma ji 500 udhaar' or 'namaste'), reply ONLY in Hinglish. NEVER mix languages. The reply language must be 100% identical to input language. Classify intent into: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, UNKNOWN. Inventory examples: 'chawal 50kg aaya', 'maggi 100 packet aaya' => INVENTORY_ADD with itemName, quantity, unit. 'chawal stock kitna hai' => CHECK_STOCK with itemName. 'sabka stock dikhao' => ALL_STOCK. Extract customerName, amount, phoneNumber, itemName, quantity, unit where relevant. Reply ONLY in JSON: {intent: 'LOG_UDHAAR', customerName: 'Sharma ji', amount: 500, language: 'hindi'}";
 
 const client = new Groq({ apiKey: env.groqApiKey });
 
@@ -38,6 +38,9 @@ const ALLOWED_INTENTS = new Set([
   "SABKA_UDHAAR",
   "SAVE_NUMBER",
   "SEND_REMINDER",
+  "INVENTORY_ADD",
+  "CHECK_STOCK",
+  "ALL_STOCK",
   "UNKNOWN",
 ]);
 const ALLOWED_LANGUAGES = new Set(["hindi", "hinglish", "english"]);
@@ -131,6 +134,9 @@ async function detectIntent(messageText) {
   const customerName = String(parsed.customerName || "").trim();
   const phoneNumber = String(parsed.phoneNumber || "").trim();
   const amount = Number(parsed.amount);
+  const itemName = String(parsed.itemName || "").trim();
+  const quantity = Number(parsed.quantity);
+  const unit = String(parsed.unit || "").trim();
   const modelLanguage = String(parsed.language || "hinglish").toLowerCase().trim();
   const strictLanguage = inferLanguageFromText(messageText);
 
@@ -139,6 +145,9 @@ async function detectIntent(messageText) {
     customerName,
     phoneNumber,
     amount: Number.isFinite(amount) ? amount : null,
+    itemName,
+    quantity: Number.isFinite(quantity) ? quantity : null,
+    unit,
     // Enforce language based on input text so replies always match user language.
     language: ALLOWED_LANGUAGES.has(strictLanguage)
       ? strictLanguage

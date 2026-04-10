@@ -7,6 +7,9 @@ const {
   saveCustomerPhone,
   getCustomerPhone,
   getAllPendingUdhaar,
+  addInventoryStock,
+  getInventoryStock,
+  getAllInventoryStock,
 } = require("../services/udhaarService");
 const { sendTextMessage } = require("../services/whatsappService");
 const {
@@ -60,6 +63,9 @@ function buildText(language, key, params = {}) {
         "पेमेंट रिसीव्ड - 'शर्मा जी 200 वापस'\n" +
         "आज का हिसाब - 'आज का हिसाब'\n" +
         "सबका उधार - 'सबका उधार दिखाओ'\n" +
+        "स्टॉक जोड़ें - 'चावल 50kg आया'\n" +
+        "स्टॉक चेक - 'चावल stock कितना है'\n" +
+        "सारा स्टॉक - 'sabka stock dikhao'\n" +
         "कस्टमर नंबर सेव - 'शर्मा जी number 9876543210'\n" +
         "कस्टमर रिमाइंडर - 'शर्मा जी को remind करो'\n" +
         "वॉइस मैसेज - कुछ भी बोलकर भेजिए, मैं समझ जाऊंगा!\n\n" +
@@ -68,6 +74,13 @@ function buildText(language, key, params = {}) {
       TODAY_HISAAB: `आज का हिसाब:\nनया उधार: ₹${p.newUdhaar}\nवापस मिला: ₹${p.wapasReceived}\nनेट उधार आज: ₹${p.netUdhaar}`,
       NO_PENDING_ALL: "सभी का उधार:\nकोई पेंडिंग उधार नहीं है।\nकुल: Rs0",
       ALL_UDHAAR: `सभी का उधार:\n${p.lines}\nकुल: Rs${p.total}`,
+      INVENTORY_ADD_ERROR: "स्टॉक एंट्री के लिए item या quantity clear नहीं है।",
+      INVENTORY_ADD_OK: `${p.itemName} का stock update हो गया। अभी: ${p.quantity}${p.unitText}`,
+      STOCK_CHECK_ERROR: "कौन सा item का stock check करना है, समझ नहीं आया।",
+      STOCK_NOT_FOUND: `${p.itemName} का stock नहीं मिला।`,
+      STOCK_CHECK_OK: `${p.itemName} ka current stock: ${p.quantity}${p.unitText}`,
+      ALL_STOCK_EMPTY: "स्टॉक लिस्ट खाली है।",
+      ALL_STOCK: `सारा स्टॉक:\n${p.lines}`,
       SAVE_NUMBER_ERROR: "कस्टमर का नाम या फोन नंबर समझ नहीं आया।",
       SAVE_NUMBER_OK: `${p.customerName} का नंबर सेव हो गया।`,
       REMINDER_NAME_ERROR: "किस कस्टमर को रिमाइंडर भेजना है, समझ नहीं आया।",
@@ -91,6 +104,9 @@ function buildText(language, key, params = {}) {
         "Payment Received - 'Sharma ji 200 wapas'\n" +
         "Aaj Ka Hisaab - 'aaj ka hisaab'\n" +
         "Sabka Udhaar - 'sabka udhaar dikhao'\n" +
+        "Stock Add - 'chawal 50kg aaya'\n" +
+        "Stock Check - 'chawal stock kitna hai'\n" +
+        "All Stock - 'sabka stock dikhao'\n" +
         "Customer Number Save - 'Sharma ji number 9876543210'\n" +
         "Customer Reminder - 'Sharma ji ko remind karo'\n" +
         "Voice Messages - Kuch bhi bolke bhejo, main samjhunga!\n\n" +
@@ -99,6 +115,13 @@ function buildText(language, key, params = {}) {
       TODAY_HISAAB: `Aaj ka hisaab:\nNaya udhaar: ₹${p.newUdhaar}\nWapas mila: ₹${p.wapasReceived}\nNet udhaar aaj: ₹${p.netUdhaar}`,
       NO_PENDING_ALL: "Sabka udhaar:\nKoi pending udhaar nahi hai.\nTotal: Rs0",
       ALL_UDHAAR: `Sabka udhaar:\n${p.lines}\nTotal: Rs${p.total}`,
+      INVENTORY_ADD_ERROR: "Stock entry ke liye item ya quantity clear nahi hai.",
+      INVENTORY_ADD_OK: `${p.itemName} ka stock update ho gaya. Abhi: ${p.quantity}${p.unitText}`,
+      STOCK_CHECK_ERROR: "Kaunsa item ka stock check karna hai, samajh nahi aaya.",
+      STOCK_NOT_FOUND: `${p.itemName} ka stock nahi mila.`,
+      STOCK_CHECK_OK: `${p.itemName} ka current stock: ${p.quantity}${p.unitText}`,
+      ALL_STOCK_EMPTY: "Stock list khaali hai.",
+      ALL_STOCK: `Sabka stock:\n${p.lines}`,
       SAVE_NUMBER_ERROR: "Customer name ya phone number samajh nahi aaya.",
       SAVE_NUMBER_OK: `${p.customerName} ka number save ho gaya.`,
       REMINDER_NAME_ERROR: "Kis customer ko reminder bhejna hai, samajh nahi aaya.",
@@ -122,6 +145,9 @@ function buildText(language, key, params = {}) {
         "Payment Received - 'Sharma ji paid 200'\n" +
         "Today's Summary - 'today report'\n" +
         "All Pending Udhaar - 'show all udhaar'\n" +
+        "Add Stock - 'rice 50 kg aaya'\n" +
+        "Check Stock - 'rice stock kitna hai'\n" +
+        "All Stock - 'show all stock'\n" +
         "Save Customer Number - 'Sharma ji number 9876543210'\n" +
         "Send Reminder - 'remind Sharma ji'\n" +
         "Voice Messages - Send voice notes, I will understand!\n\n" +
@@ -130,6 +156,13 @@ function buildText(language, key, params = {}) {
       TODAY_HISAAB: `Today's summary:\nNew udhaar: ₹${p.newUdhaar}\nRepayment received: ₹${p.wapasReceived}\nNet udhaar today: ₹${p.netUdhaar}`,
       NO_PENDING_ALL: "All udhaar:\nNo pending udhaar.\nTotal: Rs0",
       ALL_UDHAAR: `All udhaar:\n${p.lines}\nTotal: Rs${p.total}`,
+      INVENTORY_ADD_ERROR: "Item or quantity is unclear for stock entry.",
+      INVENTORY_ADD_OK: `${p.itemName} stock updated. Current: ${p.quantity}${p.unitText}`,
+      STOCK_CHECK_ERROR: "Could not understand which item stock to check.",
+      STOCK_NOT_FOUND: `No stock found for ${p.itemName}.`,
+      STOCK_CHECK_OK: `${p.itemName} current stock: ${p.quantity}${p.unitText}`,
+      ALL_STOCK_EMPTY: "Stock list is empty.",
+      ALL_STOCK: `All stock:\n${p.lines}`,
       SAVE_NUMBER_ERROR: "Could not understand customer name or phone number.",
       SAVE_NUMBER_OK: `${p.customerName}'s number has been saved.`,
       REMINDER_NAME_ERROR: "Could not understand which customer to remind.",
@@ -192,6 +225,9 @@ async function receiveWebhook(req, res) {
     const customerName = (aiResult.customerName || "").trim();
     const amount = Number(aiResult.amount);
     const phoneNumber = (aiResult.phoneNumber || "").trim();
+    const itemName = (aiResult.itemName || "").trim();
+    const quantity = Number(aiResult.quantity);
+    const unit = (aiResult.unit || "").trim();
     const language = normalizeLanguage(aiResult.language);
 
     if (intent === "GREETING") {
@@ -228,6 +264,83 @@ async function receiveWebhook(req, res) {
         });
 
       await sendTextMessage({ to: ownerWaId, text: replyText });
+      return;
+    }
+
+    if (intent === "INVENTORY_ADD") {
+      if (!itemName || !Number.isFinite(quantity) || quantity <= 0) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: buildText(language, "INVENTORY_ADD_ERROR"),
+        });
+        return;
+      }
+
+      const row = await addInventoryStock({ itemName, quantity, unit });
+      const quantityText = formatAmount(row.quantity);
+      const unitText = row.unit ? ` ${row.unit}` : "";
+      await sendTextMessage({
+        to: ownerWaId,
+        text: buildText(language, "INVENTORY_ADD_OK", {
+          itemName: row.item_name || itemName,
+          quantity: quantityText,
+          unitText,
+        }),
+      });
+      return;
+    }
+
+    if (intent === "CHECK_STOCK") {
+      if (!itemName) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: buildText(language, "STOCK_CHECK_ERROR"),
+        });
+        return;
+      }
+
+      const stock = await getInventoryStock({ itemName });
+      if (!stock) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: buildText(language, "STOCK_NOT_FOUND", { itemName }),
+        });
+        return;
+      }
+
+      const quantityText = formatAmount(stock.quantity);
+      const unitText = stock.unit ? ` ${stock.unit}` : "";
+      await sendTextMessage({
+        to: ownerWaId,
+        text: buildText(language, "STOCK_CHECK_OK", {
+          itemName: stock.item_name || itemName,
+          quantity: quantityText,
+          unitText,
+        }),
+      });
+      return;
+    }
+
+    if (intent === "ALL_STOCK") {
+      const rows = await getAllInventoryStock();
+      if (!rows.length) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: buildText(language, "ALL_STOCK_EMPTY"),
+        });
+        return;
+      }
+
+      const lines = rows.map((row) => {
+        const quantityText = formatAmount(row.quantity);
+        const unitText = row.unit ? ` ${row.unit}` : "";
+        return `${row.item_name}: ${quantityText}${unitText}`;
+      });
+
+      await sendTextMessage({
+        to: ownerWaId,
+        text: buildText(language, "ALL_STOCK", { lines: lines.join("\n") }),
+      });
       return;
     }
 
