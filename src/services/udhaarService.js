@@ -1,5 +1,24 @@
 const { supabase } = require("../config/supabase");
 const INVENTORY_TABLE = "inventory";
+const DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
+function normalizeName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\bji\b/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function namesSimilar(a, b) {
+  const x = normalizeName(a);
+  const y = normalizeName(b);
+  if (!x || !y) {
+    return false;
+  }
+  return x === y || x.includes(y) || y.includes(x);
+}
 
 async function logUdhaar({ customerName, amount }) {
   const { data, error } = await supabase
@@ -42,14 +61,15 @@ async function logWapas({ customerName, amount }) {
 async function getCustomerUdhaarTotal({ customerName }) {
   const { data, error } = await supabase
     .from("udhaar_logs")
-    .select("amount")
-    .ilike("customer_name", customerName);
+    .select("customer_name,amount");
 
   if (error) {
     throw new Error(`Supabase fetch failed: ${error.message}`);
   }
 
-  const total = (data || []).reduce((sum, row) => sum + Number(row.amount || 0), 0);
+  const total = (data || [])
+    .filter((row) => namesSimilar(row.customer_name, customerName))
+    .reduce((sum, row) => sum + Number(row.amount || 0), 0);
   return total;
 }
 
@@ -90,17 +110,17 @@ async function getTodayHisaab() {
 }
 
 async function saveCustomerPhone({ customerName, phone }) {
-  const { data: existing, error: findError } = await supabase
+  const { data: existingRows, error: findError } = await supabase
     .from("customers")
-    .select("id")
-    .ilike("customer_name", customerName)
-    .limit(1)
-    .maybeSingle();
+    .select("id,customer_name");
 
   if (findError) {
     throw new Error(`Supabase fetch failed: ${findError.message}`);
   }
 
+  const existing = (existingRows || []).find((row) =>
+    namesSimilar(row.customer_name, customerName),
+  );
   if (existing?.id) {
     const { error: updateError } = await supabase
       .from("customers")
@@ -129,16 +149,14 @@ async function saveCustomerPhone({ customerName, phone }) {
 async function getCustomerPhone({ customerName }) {
   const { data, error } = await supabase
     .from("customers")
-    .select("phone_number")
-    .ilike("customer_name", customerName)
-    .limit(1)
-    .maybeSingle();
+    .select("customer_name,phone_number");
 
   if (error) {
     throw new Error(`Supabase fetch failed: ${error.message}`);
   }
 
-  return data?.phone_number || null;
+  const matched = (data || []).find((row) => namesSimilar(row.customer_name, customerName));
+  return matched?.phone_number || null;
 }
 
 async function getAllPendingUdhaar() {
@@ -207,10 +225,10 @@ async function addInventoryStock({ itemName, quantity, unit }) {
       .update({
         item_name: existing.item_name || normalizedItemName,
         quantity: nextQuantity,
-        unit: normalizedUnit || existing.unit || "",
+        unit: normalizedUnit || existing.unit || "pieces",
       })
       .eq("id", existing.id)
-      .select("item_name,quantity,unit")
+      .select("*")
       .single();
 
     if (updateError) {
@@ -226,10 +244,10 @@ async function addInventoryStock({ itemName, quantity, unit }) {
       {
         item_name: normalizedItemName,
         quantity: Number(quantity || 0),
-        unit: normalizedUnit,
+        unit: normalizedUnit || "pieces",
       },
     ])
-    .select("item_name,quantity,unit")
+    .select("*")
     .single();
 
   if (error) {
@@ -243,7 +261,7 @@ async function getInventoryStock({ itemName }) {
   const normalizedItemName = String(itemName || "").trim();
   const { data: exactData, error: exactError } = await supabase
     .from(INVENTORY_TABLE)
-    .select("item_name,quantity,unit")
+    .select("*")
     .ilike("item_name", normalizedItemName)
     .limit(1)
     .maybeSingle();
@@ -258,7 +276,7 @@ async function getInventoryStock({ itemName }) {
 
   const { data: fuzzyData, error: fuzzyError } = await supabase
     .from(INVENTORY_TABLE)
-    .select("item_name,quantity,unit")
+    .select("*")
     .ilike("item_name", `%${normalizedItemName}%`)
     .limit(1)
     .maybeSingle();
@@ -273,7 +291,7 @@ async function getInventoryStock({ itemName }) {
 async function getAllInventoryStock() {
   const { data, error } = await supabase
     .from(INVENTORY_TABLE)
-    .select("item_name,quantity,unit")
+    .select("*")
     .order("item_name", { ascending: true });
 
   if (error) {
@@ -281,6 +299,19 @@ async function getAllInventoryStock() {
   }
 
   return data || [];
+}
+
+function getLowStockAlertInfo(row) {
+  const quantity = Number(row?.quantity || 0);
+  const threshold = Number(row?.low_stock_threshold);
+  const safeThreshold = Number.isFinite(threshold) ? threshold : DEFAULT_LOW_STOCK_THRESHOLD;
+  return {
+    isLow: quantity < safeThreshold,
+    quantity,
+    threshold: safeThreshold,
+    unit: String(row?.unit || "pieces").trim() || "pieces",
+    itemName: String(row?.item_name || "").trim(),
+  };
 }
 
 module.exports = {
@@ -294,4 +325,5 @@ module.exports = {
   addInventoryStock,
   getInventoryStock,
   getAllInventoryStock,
+  getLowStockAlertInfo,
 };

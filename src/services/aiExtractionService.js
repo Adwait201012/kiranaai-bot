@@ -1,38 +1,15 @@
 const Groq = require("groq-sdk");
 const env = require("../config/env");
 
-const SYSTEM_PROMPT =
-  "Classify the user message into one intent from: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, UNKNOWN. Return ONLY JSON. For inventory extraction, support ANY grocery/food item name in Hindi/English/Hinglish dynamically (do not hardcode item names). IMPORTANT: quantity must be full numeric value, never truncated to first digit (100 stays 100, 50 stays 50, 200 stays 200, 1000 stays 1000). Return keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For multi-item inventory messages, `items` should be an array like [{itemName, quantity, unit}, ...].";
-const ITEM_NORMALIZE_PROMPT =
-  "Normalize grocery item names to a standard singular kirana form in lowercase. Keep only item name text. Map common variants to one standard (examples: chawal/rice/chaawal -> chawal, aata/atta/wheat flour -> aata, maggi/Maggi -> maggi). Return ONLY JSON: {\"normalizedItemName\":\"...\"}.";
-
 const client = new Groq({ apiKey: env.groqApiKey });
 
-function normalizeJsonText(rawText) {
-  const cleaned = rawText.trim().replace(/^```json\s*/i, "").replace(/```$/i, "");
-  return cleaned
-    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
-    .replace(/:\s*'([^']*)'/g, ': "$1"');
-}
+const SYSTEM_PROMPT =
+  "Classify kirana owner messages into exactly one intent: LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, GREETING, UNKNOWN. Return ONLY JSON with keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For inventory, extract full quantity number (never truncate digits), any item name, and unit. For multi-item lines return items array: [{itemName, quantity, unit}].";
 
-function getJsonObjectText(rawText) {
-  const firstBrace = rawText.indexOf("{");
-  const lastBrace = rawText.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return rawText;
-  }
-  return rawText.slice(firstBrace, lastBrace + 1);
-}
-
-function fallbackIntent() {
-  return {
-    intent: "UNKNOWN",
-    language: "hinglish",
-  };
-}
+const ITEM_NORMALIZE_PROMPT =
+  "Normalize kirana item to one standard lowercase Indian name. Examples: chawal/rice/chaawal -> chawal, aata/atta/wheat flour -> aata, maggi/Maggi -> maggi. Return ONLY JSON: {\"normalizedItemName\":\"...\"}.";
 
 const ALLOWED_INTENTS = new Set([
-  "GREETING",
   "LOG_UDHAAR",
   "CHECK_UDHAAR",
   "LOG_WAPAS",
@@ -43,33 +20,47 @@ const ALLOWED_INTENTS = new Set([
   "INVENTORY_ADD",
   "CHECK_STOCK",
   "ALL_STOCK",
+  "GREETING",
   "UNKNOWN",
 ]);
-const ALLOWED_LANGUAGES = new Set(["hindi", "hinglish", "english"]);
+
 const HINGLISH_HINT_WORDS = new Set([
   "udhaar",
   "udhar",
   "hisaab",
   "hisab",
-  "wapas",
   "kitna",
-  "batao",
-  "karo",
-  "diya",
-  "ne",
+  "wapas",
+  "aaya",
+  "aayi",
+  "dikhao",
+  "sabka",
   "ka",
   "ko",
-  "namaste",
-  "namaskar",
-  "pranam",
-  "aji",
-  "ajj",
-  "aaj",
+  "hai",
 ]);
 
-function getLatinWordTokens(text) {
-  const matches = String(text || "").toLowerCase().match(/[a-z]+/g);
-  return matches || [];
+const UNIT_WORDS =
+  "(kg|g|gm|gram|grams|ltr|l|litre|liter|liters|ml|packet|packets|pack|packs|pcs|pc|piece|pieces|dozen|box|boxes)";
+
+function normalizeJsonText(rawText) {
+  const cleaned = String(rawText || "")
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/```$/i, "");
+  return cleaned
+    .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
+    .replace(/:\s*'([^']*)'/g, ': "$1"');
+}
+
+function getJsonObjectText(rawText) {
+  const text = String(rawText || "");
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return text;
+  }
+  return text.slice(firstBrace, lastBrace + 1);
 }
 
 function detectLanguageFromText(messageText) {
@@ -77,67 +68,24 @@ function detectLanguageFromText(messageText) {
   if (!text) {
     return "hinglish";
   }
-
-  // Devanagari range indicates Hindi script.
   if (/[\u0900-\u097F]/.test(text)) {
     return "hindi";
   }
-
-  const tokens = getLatinWordTokens(text);
-  if (tokens.length === 0) {
+  const words = text.toLowerCase().match(/[a-z]+/g) || [];
+  if (!words.length) {
     return "english";
   }
-
-  const hasHinglishMarker = tokens.some((token) => HINGLISH_HINT_WORDS.has(token));
-  if (hasHinglishMarker) {
-    return "hinglish";
-  }
-
-  return "english";
-}
-
-function parseNumberAndUnit(text) {
-  const input = String(text || "");
-  const quantityMatch = /(^|[^\d])(\d{1,9}(?:\.\d+)?)(?!\d)/.exec(input);
-  if (!quantityMatch) {
-    return { quantity: null, unit: "pieces" };
-  }
-
-  const quantity = Number(quantityMatch[2]);
-  const remaining = input.slice(quantityMatch.index + quantityMatch[0].length).trim();
-  const unitMatch = /^(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes|[^\s]+)/i.exec(
-    remaining,
-  );
-  const candidateUnit = String(unitMatch?.[1] || "").toLowerCase().trim();
-  const unit = /^(aaya|aayi|aaye|got|received|added|add)$/.test(candidateUnit)
-    ? "pieces"
-    : candidateUnit || "pieces";
-  return {
-    quantity: Number.isFinite(quantity) ? quantity : null,
-    unit,
-  };
-}
-
-function removeNoise(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/\b(aaj|today|got|received|added|add|aaya|aayi|aaye|inventory|stock|mein|me|ko|hai|kitna|kitni|dikhao|show|all|sabka|sabhi|ka|ki|aur|and)\b/g, " ")
-    .replace(/[^\p{L}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return words.some((w) => HINGLISH_HINT_WORDS.has(w)) ? "hinglish" : "english";
 }
 
 function cleanupItemName(raw) {
-  // Keep user-provided item wording (e.g., "rice" vs "chawal") as-is semantically;
-  // only remove action/noise tokens. No language-based item translation is applied.
-  const text = String(raw || "")
+  return String(raw || "")
     .toLowerCase()
     .replace(/\b(aaj|today|got|received|added|add|aaya|aayi|aaye|inventory|stock|mein|me|ko|hai|kitna|kitni|dikhao|show|all|sabka|sabhi|ka|ki|aur|and)\b/g, " ")
-    .replace(/\d+(?:\.\d+)?\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?/gi, " ")
+    .replace(/\d{1,9}(?:\.\d+)?\s*(kg|g|gm|gram|grams|ltr|l|litre|liter|liters|ml|packet|packets|pack|packs|pcs|pc|piece|pieces|dozen|box|boxes)?/gi, " ")
     .replace(/[^\p{L}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return text;
 }
 
 function parseInventoryPart(partText) {
@@ -145,204 +93,135 @@ function parseInventoryPart(partText) {
   if (!part) {
     return null;
   }
-
-  const qFirst = part.match(
-    /(\d{1,9}(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?\s+(.+)/i,
-  );
+  const qFirst = new RegExp(`(\\d{1,9}(?:\\.\\d+)?)\\s*${UNIT_WORDS}?\\s+(.+)`, "i").exec(part);
   if (qFirst) {
     const quantity = Number(qFirst[1]);
-    const unit = String(qFirst[2] || "").toLowerCase();
+    const unit = String(qFirst[2] || "pieces").toLowerCase();
     const itemName = cleanupItemName(qFirst[3]);
     if (itemName && Number.isFinite(quantity) && quantity > 0) {
-      return { itemName, quantity, unit };
+      return { itemName, quantity, unit: unit || "pieces" };
     }
   }
 
-  const qLast = part.match(
-    /(.+?)\s+(\d{1,9}(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?$/i,
-  );
+  const qLast = new RegExp(`(.+?)\\s+(\\d{1,9}(?:\\.\\d+)?)\\s*${UNIT_WORDS}?$`, "i").exec(part);
   if (qLast) {
     const itemName = cleanupItemName(qLast[1]);
     const quantity = Number(qLast[2]);
     const unit = String(qLast[3] || "pieces").toLowerCase();
     if (itemName && Number.isFinite(quantity) && quantity > 0) {
-      return { itemName, quantity, unit };
+      return { itemName, quantity, unit: unit || "pieces" };
     }
   }
 
-  const anyNumber = part.match(/(.+?)\s+(\d{1,9}(?:\.\d+)?)(?:\s+([^\s]+))?/i);
-  if (anyNumber) {
-    const itemName = cleanupItemName(anyNumber[1]);
-    const quantity = Number(anyNumber[2]);
-    const candidateUnit = String(anyNumber[3] || "").toLowerCase().trim();
-    const unit = /^(aaya|aayi|aaye|got|received|added|add)$/.test(candidateUnit)
-      ? "pieces"
-      : candidateUnit || "pieces";
-    if (itemName && Number.isFinite(quantity) && quantity > 0) {
-      return { itemName, quantity, unit };
-    }
-  }
-
+  const any = /(\d{1,9}(?:\.\d+)?)/.exec(part);
   const fallbackName = cleanupItemName(part);
   if (fallbackName) {
-    return { itemName: fallbackName, quantity: 1, unit: "pieces" };
+    return {
+      itemName: fallbackName,
+      quantity: any ? Number(any[1]) : 1,
+      unit: "pieces",
+    };
   }
-
   return null;
 }
 
 function parseInventoryItems(rawText) {
-  const normalized = String(rawText || "")
-    .replace(/\b(aaya|aayi|aaye|got|received|added)\b/gi, " ")
-    .trim();
-  const parts = normalized.split(/\s+(?:aur|and|,)\s+/i);
-  const items = parts
-    .map((part) => parseInventoryPart(part))
-    .filter(Boolean);
-
-  const deduped = [];
-  const seen = new Set();
-  for (const item of items) {
-    const key = `${item.itemName}|${item.unit}|${item.quantity}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    deduped.push(item);
-  }
-  return deduped;
+  const raw = String(rawText || "").replace(/\b(aaya|aayi|aaye|got|received|added)\b/gi, " ");
+  const parts = raw.split(/\s*(?:aur|and|,|&)\s*/i).filter(Boolean);
+  return parts.map(parseInventoryPart).filter(Boolean);
 }
 
 function inferInventoryFromText(messageText) {
   const raw = String(messageText || "").trim();
   const lower = raw.toLowerCase();
 
-  const isAllStock =
-    /(^|\s)(sabka stock|sabhi stock|all stock|show all stock|stock dikhao|inventory dikhao)(\s|$)/i.test(
-      lower,
-    );
-  if (isAllStock) {
+  if (/(^|\s)(sabka stock|sabhi stock|all stock|show all stock|inventory dikhao)(\s|$)/i.test(lower)) {
     return { intent: "ALL_STOCK" };
   }
 
-  const isStockQuery =
-    /stock/.test(lower) && /(kitna|kitni|how much|quantity|hai|\?)/.test(lower);
-  if (isStockQuery) {
-    return {
-      intent: "CHECK_STOCK",
-      itemName: cleanupItemName(raw),
-    };
+  if (/\bstock\b/i.test(lower) && /(kitna|kitni|how much|quantity|hai|\?)/i.test(lower)) {
+    return { intent: "CHECK_STOCK", itemName: cleanupItemName(raw) };
   }
 
-  const isInventoryAdd =
-    /(aaya|aayi|aaye|got|received|added)/.test(lower);
-  if (!isInventoryAdd) {
+  if (!/(aaya|aayi|aaye|got|received|added)/i.test(lower)) {
     return {};
   }
 
-  const parsedItems = parseInventoryItems(raw);
-  if (parsedItems.length) {
-    return {
-      intent: "INVENTORY_ADD",
-      itemName: parsedItems[0].itemName,
-      quantity: parsedItems[0].quantity,
-      unit: parsedItems[0].unit,
-      items: parsedItems,
-    };
+  const items = parseInventoryItems(raw);
+  if (!items.length) {
+    return {};
   }
-
-  const { quantity, unit } = parseNumberAndUnit(lower);
-  const itemName = cleanupItemName(removeNoise(raw));
   return {
     intent: "INVENTORY_ADD",
-    itemName,
-    quantity,
-    unit,
-    items: itemName ? [{ itemName, quantity: quantity || 1, unit: unit || "pieces" }] : [],
+    itemName: items[0].itemName,
+    quantity: items[0].quantity,
+    unit: items[0].unit || "pieces",
+    items,
+  };
+}
+
+function fallbackIntent() {
+  return {
+    intent: "UNKNOWN",
+    customerName: "",
+    amount: null,
+    phoneNumber: "",
+    itemName: "",
+    quantity: null,
+    unit: "pieces",
+    items: [],
+    language: "hinglish",
   };
 }
 
 async function detectIntent(messageText) {
-  const completion = await client.chat.completions.create({
-    model: "llama-3.1-8b-instant",
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: messageText,
-      },
-    ],
-  });
-
-  const output = completion.choices?.[0]?.message?.content || "";
-
-  const normalized = normalizeJsonText(getJsonObjectText(output));
-  let parsed;
+  const strictLanguage = detectLanguageFromText(messageText);
+  let parsed = {};
 
   try {
-    parsed = JSON.parse(normalized);
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: String(messageText || "") },
+      ],
+    });
+    const output = completion.choices?.[0]?.message?.content || "";
+    parsed = JSON.parse(normalizeJsonText(getJsonObjectText(output)));
   } catch {
-    return fallbackIntent();
+    parsed = {};
   }
 
-  if (!parsed || typeof parsed !== "object") {
-    return fallbackIntent();
-  }
-
-  const intent = String(parsed.intent || "UNKNOWN").toUpperCase().trim();
-  if (!ALLOWED_INTENTS.has(intent)) {
-    return fallbackIntent();
-  }
-
-  const customerName = String(parsed.customerName || "").trim();
-  const phoneNumber = String(parsed.phoneNumber || "").trim();
-  const amount = Number(parsed.amount);
-  const itemName = String(parsed.itemName || "").trim();
-  const quantity = Number(parsed.quantity);
-  const unit = String(parsed.unit || "").trim();
-  const items = Array.isArray(parsed.items)
-    ? parsed.items
-        .map((entry) => ({
-          itemName: String(entry?.itemName || "").trim(),
-          quantity: Number(entry?.quantity),
-          unit: String(entry?.unit || "").trim(),
-        }))
-        .filter((entry) => entry.itemName)
-    : [];
-  const modelLanguage = String(parsed.language || "hinglish").toLowerCase().trim();
-  const strictLanguage = detectLanguageFromText(messageText);
-
+  const modelIntent = String(parsed.intent || "UNKNOWN").toUpperCase().trim();
+  const intent = ALLOWED_INTENTS.has(modelIntent) ? modelIntent : "UNKNOWN";
   const inventoryFallback = inferInventoryFromText(messageText);
-  const finalIntent = inventoryFallback.intent || intent;
-  const finalItemName = inventoryFallback.itemName || itemName;
-  const finalQuantity = Number.isFinite(inventoryFallback.quantity)
-    ? inventoryFallback.quantity
-    : quantity;
-  const finalUnit = inventoryFallback.unit || unit;
-  const finalItems = Array.isArray(inventoryFallback.items) && inventoryFallback.items.length
-    ? inventoryFallback.items
-    : items;
 
   return {
-    intent: finalIntent,
-    customerName,
-    phoneNumber,
-    amount: Number.isFinite(amount) ? amount : null,
-    itemName: finalItemName,
-    quantity: Number.isFinite(finalQuantity) ? finalQuantity : null,
-    unit: finalUnit,
-    items: finalItems,
-    // Enforce language based on input text so replies always match user language.
-    language: ALLOWED_LANGUAGES.has(strictLanguage)
-      ? strictLanguage
-      : ALLOWED_LANGUAGES.has(modelLanguage)
-        ? modelLanguage
-        : "hinglish",
+    intent: inventoryFallback.intent || intent,
+    customerName: String(parsed.customerName || "").trim(),
+    amount: Number.isFinite(Number(parsed.amount)) ? Number(parsed.amount) : null,
+    phoneNumber: String(parsed.phoneNumber || "").trim(),
+    itemName: String(inventoryFallback.itemName || parsed.itemName || "").trim(),
+    quantity: Number.isFinite(Number(inventoryFallback.quantity))
+      ? Number(inventoryFallback.quantity)
+      : Number.isFinite(Number(parsed.quantity))
+        ? Number(parsed.quantity)
+        : null,
+    unit: String(inventoryFallback.unit || parsed.unit || "pieces").trim().toLowerCase() || "pieces",
+    items: Array.isArray(inventoryFallback.items)
+      ? inventoryFallback.items
+      : Array.isArray(parsed.items)
+        ? parsed.items
+            .map((it) => ({
+              itemName: String(it?.itemName || "").trim(),
+              quantity: Number(it?.quantity),
+              unit: String(it?.unit || "pieces").trim().toLowerCase() || "pieces",
+            }))
+            .filter((it) => it.itemName)
+        : [],
+    language: strictLanguage,
   };
 }
 
@@ -351,7 +230,6 @@ async function normalizeInventoryItemName(itemName) {
   if (!raw) {
     return "";
   }
-
   try {
     const completion = await client.chat.completions.create({
       model: "llama-3.1-8b-instant",
@@ -363,8 +241,7 @@ async function normalizeInventoryItemName(itemName) {
       ],
     });
     const output = completion.choices?.[0]?.message?.content || "";
-    const normalized = normalizeJsonText(getJsonObjectText(output));
-    const parsed = JSON.parse(normalized);
+    const parsed = JSON.parse(normalizeJsonText(getJsonObjectText(output)));
     const value = String(parsed?.normalizedItemName || "").trim().toLowerCase();
     return value || raw.toLowerCase();
   } catch {
@@ -372,4 +249,8 @@ async function normalizeInventoryItemName(itemName) {
   }
 }
 
-module.exports = { detectIntent, detectLanguageFromText, normalizeInventoryItemName };
+module.exports = {
+  detectIntent,
+  detectLanguageFromText,
+  normalizeInventoryItemName,
+};
