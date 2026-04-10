@@ -60,20 +60,32 @@ function buildText(language, key, params = {}) {
 
   const templates = {
     hindi: {
-      GREETING_INTRO: "नमस्ते 👋 मैं VyaparAI हूं।",
-      TODAY_HISAAB: `आज: +₹${p.newUdhaar}, -₹${p.wapasReceived}, नेट ₹${p.netUdhaar}`,
-      NO_PENDING_ALL: "कोई पेंडिंग उधार नहीं ✅",
-      ALL_UDHAAR: `उधार सूची:\n${p.lines}\nकुल ₹${p.total}`,
+      GREETING_INTRO:
+        "👋 नमस्ते! मैं VyaparAI हूं!\n" +
+        "आप क्या करना चाहते हैं?\n" +
+        "💰 उधार लॉग — शर्मा जी 500 उधार\n" +
+        "🔍 उधार चेक — शर्मा जी कितना उधार\n" +
+        "✅ पेमेंट लिया — शर्मा जी 200 वापस\n" +
+        "📊 आज का हिसाब — आज का हिसाब\n" +
+        "👥 सबका उधार — सबका उधार दिखाओ\n" +
+        "📦 स्टॉक जोड़ें — चावल 50kg आया\n" +
+        "📉 स्टॉक चेक — चावल कितना है\n" +
+        "📋 सबका स्टॉक — सबका स्टॉक दिखाओ\n" +
+        "📱 नंबर सेव — शर्मा जी number 9876543210\n" +
+        "🔔 रिमाइंडर — शर्मा जी को remind करो",
+      TODAY_HISAAB: `📊 आज का हिसाब\n💸 नया उधार: ₹${p.newUdhaar}\n✅ वापस मिला: ₹${p.wapasReceived}\n📌 नेट उधार: ₹${p.netUdhaar}`,
+      NO_PENDING_ALL: "👥 सबका उधार\nकोई पेंडिंग उधार नहीं ✅\n💰 Total: ₹0",
+      ALL_UDHAAR: `👥 सबका उधार\n${p.lines}\n💰 Total: ₹${p.total}`,
       INVENTORY_ADD_ERROR: "इन्वेंटरी जोड़ने के लिए वस्तु या मात्रा स्पष्ट नहीं है।",
-      INVENTORY_ADD_OK: `${p.itemName}: ${p.quantity}${p.unitText} जोड़ दिया ✅ कुल: ${p.totalQuantity}${p.unitText}`,
-      INVENTORY_ADD_MULTI: `जोड़ दिया ✅\n${p.lines}`,
-      INVENTORY_ADD_MULTI_ITEM: `${p.itemName}: +${p.quantity}${p.unitText}, कुल ${p.totalQuantity}${p.unitText}`,
+      INVENTORY_ADD_OK: `📦 स्टॉक अपडेटेड!\n🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
+      INVENTORY_ADD_MULTI: `📦 स्टॉक अपडेटेड!\n${p.lines}`,
+      INVENTORY_ADD_MULTI_ITEM: `🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
       LOW_STOCK_ALERT: `⚠️ चेतावनी: ${p.itemName} कम है! सिर्फ ${p.quantity}${p.unitText} बचा है।`,
       STOCK_CHECK_ERROR: "किस वस्तु का स्टॉक देखना है, यह समझ नहीं आया।",
       STOCK_NOT_FOUND: `${p.itemName} स्टॉक में नहीं मिला।`,
-      STOCK_CHECK_OK: `${p.itemName}: ${p.quantity}${p.unitText} 📦`,
+      STOCK_CHECK_OK: `📉 स्टॉक चेक\n🏷️ ${p.itemName}\n📊 उपलब्ध: ${p.quantity}${p.unitText}`,
       ALL_STOCK_EMPTY: "स्टॉक खाली है 📭",
-      ALL_STOCK: `स्टॉक:\n${p.lines}`,
+      ALL_STOCK: `📋 सबका स्टॉक\n${p.lines}`,
       SAVE_NUMBER_ERROR: "ग्राहक का नाम या फोन नंबर समझ नहीं आया।",
       SAVE_NUMBER_OK: `${p.customerName} का नंबर सेव ✅`,
       REMINDER_NAME_ERROR: "किस ग्राहक को याद दिलाना है, यह समझ नहीं आया।",
@@ -81,28 +93,40 @@ function buildText(language, key, params = {}) {
       REMINDER_CUSTOMER: `नमस्ते ${p.customerName} जी, ₹${p.amount} उधार बाकी है। कृपया भुगतान करें।`,
       REMINDER_OWNER_OK: `रिमाइंडर भेज दिया ✅`,
       CHECK_NAME_ERROR: "कस्टमर का नाम समझ नहीं आया।",
-      CHECK_OK: `${p.customerName}: ₹${p.amount} उधार`,
+      CHECK_OK: `👤 ${p.customerName}\n💰 बाकी उधार: ₹${p.amount}`,
       WAPAS_ERROR: "वापस एंट्री के लिए नाम या अमाउंट क्लियर नहीं है।",
-      WAPAS_OK: `${p.customerName}: ₹${p.amount} वापस ✅ बाकी ₹${p.remaining}`,
+      WAPAS_OK: `✅ पेमेंट प्राप्त!\n👤 ${p.customerName}\n💵 वापस: ₹${p.amount}\n📌 बाकी: ₹${p.remaining}`,
       UDHAAR_ERROR: "उधार एंट्री के लिए नाम या अमाउंट क्लियर नहीं है।",
-      UDHAAR_OK: `${p.customerName}: ₹${p.amount} उधार जोड़ दिया ✅`,
+      UDHAAR_OK: `✅ हो गया!\n👤 ${p.customerName}\n💸 उधार: ₹${p.amount}\n📌 Total: ₹${p.total}`,
       UNKNOWN: "मैसेज समझ नहीं आया। कृपया फिर से लिखें।",
     },
     hinglish: {
-      GREETING_INTRO: "Namaste 👋 Main VyaparAI hun.",
-      TODAY_HISAAB: `Aaj: +₹${p.newUdhaar}, -₹${p.wapasReceived}, net ₹${p.netUdhaar}`,
-      NO_PENDING_ALL: "Koi pending udhaar nahi ✅",
-      ALL_UDHAAR: `Udhaar list:\n${p.lines}\nTotal ₹${p.total}`,
+      GREETING_INTRO:
+        "👋 Namaste! Main VyaparAI hun!\n" +
+        "Aap kya karna chahte ho?\n" +
+        "💰 Udhaar log — Sharma ji 500 udhaar\n" +
+        "🔍 Udhaar check — Sharma ji kitna udhaar\n" +
+        "✅ Payment liya — Sharma ji 200 wapas\n" +
+        "📊 Aaj ka hisaab — aaj ka hisaab\n" +
+        "👥 Sabka udhaar — sabka udhaar dikhao\n" +
+        "📦 Stock add — chawal 50kg aaya\n" +
+        "📉 Stock check — chawal kitna hai\n" +
+        "📋 Sabka stock — sabka stock dikhao\n" +
+        "📱 Number save — Sharma ji number 9876543210\n" +
+        "🔔 Reminder — Sharma ji ko remind karo",
+      TODAY_HISAAB: `📊 Aaj ka hisaab\n💸 Naya udhaar: ₹${p.newUdhaar}\n✅ Wapas mila: ₹${p.wapasReceived}\n📌 Net udhaar: ₹${p.netUdhaar}`,
+      NO_PENDING_ALL: "👥 Sabka udhaar\nKoi pending udhaar nahi ✅\n💰 Total: ₹0",
+      ALL_UDHAAR: `👥 Sabka udhaar\n${p.lines}\n💰 Total: ₹${p.total}`,
       INVENTORY_ADD_ERROR: "Stock entry ke liye item ya quantity clear nahi hai.",
-      INVENTORY_ADD_OK: `${p.itemName}: ${p.quantity}${p.unitText} add ✅ total: ${p.totalQuantity}${p.unitText}`,
-      INVENTORY_ADD_MULTI: `Add ho gaya ✅\n${p.lines}`,
-      INVENTORY_ADD_MULTI_ITEM: `${p.itemName}: +${p.quantity}${p.unitText}, total ${p.totalQuantity}${p.unitText}`,
-      LOW_STOCK_ALERT: `⚠️ Warning: ${p.itemName} stock low! Sirf ${p.quantity}${p.unitText} bacha hai.`,
+      INVENTORY_ADD_OK: `📦 Stock updated!\n🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
+      INVENTORY_ADD_MULTI: `📦 Stock updated!\n${p.lines}`,
+      INVENTORY_ADD_MULTI_ITEM: `🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
+      LOW_STOCK_ALERT: `⚠️ Low Stock Alert!\n🏷️ ${p.itemName}: only ${p.quantity}${p.unitText} left!`,
       STOCK_CHECK_ERROR: "Kaunsa item ka stock check karna hai, samajh nahi aaya.",
       STOCK_NOT_FOUND: `${p.itemName} stock mein nahi mila.`,
-      STOCK_CHECK_OK: `${p.itemName}: ${p.quantity}${p.unitText} 📦`,
+      STOCK_CHECK_OK: `📉 Stock check\n🏷️ ${p.itemName}\n📊 Available: ${p.quantity}${p.unitText}`,
       ALL_STOCK_EMPTY: "Stock khaali hai 📭",
-      ALL_STOCK: `Stock:\n${p.lines}`,
+      ALL_STOCK: `📋 Sabka stock\n${p.lines}`,
       SAVE_NUMBER_ERROR: "Customer name ya phone number samajh nahi aaya.",
       SAVE_NUMBER_OK: `${p.customerName} ka number save ✅`,
       REMINDER_NAME_ERROR: "Kis customer ko reminder bhejna hai, samajh nahi aaya.",
@@ -110,28 +134,40 @@ function buildText(language, key, params = {}) {
       REMINDER_CUSTOMER: `Namaste ${p.customerName} ji, ₹${p.amount} udhaar pending hai. Please payment kar dein.`,
       REMINDER_OWNER_OK: `Reminder bhej diya ✅`,
       CHECK_NAME_ERROR: "Customer ka naam samajh nahi aaya.",
-      CHECK_OK: `${p.customerName}: ₹${p.amount} udhaar`,
+      CHECK_OK: `👤 ${p.customerName}\n💰 Baaki udhaar: ₹${p.amount}`,
       WAPAS_ERROR: "Wapas entry ke liye naam ya amount clear nahi hai.",
-      WAPAS_OK: `${p.customerName}: ₹${p.amount} wapas ✅ baaki ₹${p.remaining}`,
+      WAPAS_OK: `✅ Payment received!\n👤 ${p.customerName}\n💵 Wapas: ₹${p.amount}\n📌 Baaki: ₹${p.remaining}`,
       UDHAAR_ERROR: "Udhaar entry ke liye naam ya amount clear nahi hai.",
-      UDHAAR_OK: `${p.customerName}: ₹${p.amount} udhaar add ✅`,
+      UDHAAR_OK: `✅ Done!\n👤 ${p.customerName}\n💸 Udhaar: ₹${p.amount}\n📌 Total: ₹${p.total}`,
       UNKNOWN: "Message samajh nahi aaya. Please dobara bhejein.",
     },
     english: {
-      GREETING_INTRO: "Hello 👋 I am VyaparAI.",
-      TODAY_HISAAB: `Today: +₹${p.newUdhaar}, -₹${p.wapasReceived}, net ₹${p.netUdhaar}`,
-      NO_PENDING_ALL: "No pending credit ✅",
-      ALL_UDHAAR: `Credit list:\n${p.lines}\nTotal ₹${p.total}`,
+      GREETING_INTRO:
+        "👋 Hello! I am VyaparAI!\n" +
+        "What would you like to do?\n" +
+        "💰 Log credit — Sharma ji 500 udhaar\n" +
+        "🔍 Check credit — Sharma ji kitna udhaar\n" +
+        "✅ Payment received — Sharma ji 200 wapas\n" +
+        "📊 Today summary — aaj ka hisaab\n" +
+        "👥 All credit — sabka udhaar dikhao\n" +
+        "📦 Add stock — chawal 50kg aaya\n" +
+        "📉 Check stock — chawal kitna hai\n" +
+        "📋 All stock — sabka stock dikhao\n" +
+        "📱 Save number — Sharma ji number 9876543210\n" +
+        "🔔 Reminder — Sharma ji ko remind karo",
+      TODAY_HISAAB: `📊 Today's summary\n💸 New credit: ₹${p.newUdhaar}\n✅ Received back: ₹${p.wapasReceived}\n📌 Net credit: ₹${p.netUdhaar}`,
+      NO_PENDING_ALL: "👥 All credit\nNo pending amount ✅\n💰 Total: ₹0",
+      ALL_UDHAAR: `👥 All credit\n${p.lines}\n💰 Total: ₹${p.total}`,
       INVENTORY_ADD_ERROR: "Item or quantity is unclear for stock entry.",
-      INVENTORY_ADD_OK: `${p.itemName}: ${p.quantity}${p.unitText} added ✅ total: ${p.totalQuantity}${p.unitText}`,
-      INVENTORY_ADD_MULTI: `Added ✅\n${p.lines}`,
-      INVENTORY_ADD_MULTI_ITEM: `${p.itemName}: +${p.quantity}${p.unitText}, total ${p.totalQuantity}${p.unitText}`,
+      INVENTORY_ADD_OK: `📦 Stock updated!\n🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
+      INVENTORY_ADD_MULTI: `📦 Stock updated!\n${p.lines}`,
+      INVENTORY_ADD_MULTI_ITEM: `🏷️ ${p.itemName}\n➕ Added: ${p.quantity}${p.unitText}\n📊 Total: ${p.totalQuantity}${p.unitText}`,
       LOW_STOCK_ALERT: `⚠️ Warning: ${p.itemName} stock is low! Only ${p.quantity}${p.unitText} remaining.`,
       STOCK_CHECK_ERROR: "Could not understand which item stock to check.",
       STOCK_NOT_FOUND: `No stock found for ${p.itemName}.`,
-      STOCK_CHECK_OK: `${p.itemName}: ${p.quantity}${p.unitText} 📦`,
+      STOCK_CHECK_OK: `📉 Stock check\n🏷️ ${p.itemName}\n📊 Available: ${p.quantity}${p.unitText}`,
       ALL_STOCK_EMPTY: "Stock is empty 📭",
-      ALL_STOCK: `Stock:\n${p.lines}`,
+      ALL_STOCK: `📋 All stock\n${p.lines}`,
       SAVE_NUMBER_ERROR: "Could not understand customer name or phone number.",
       SAVE_NUMBER_OK: `${p.customerName} number saved ✅`,
       REMINDER_NAME_ERROR: "Could not understand which customer to remind.",
@@ -139,11 +175,11 @@ function buildText(language, key, params = {}) {
       REMINDER_CUSTOMER: `Hello ${p.customerName}, ₹${p.amount} is pending. Please pay soon.`,
       REMINDER_OWNER_OK: `Reminder sent ✅`,
       CHECK_NAME_ERROR: "Could not understand customer name.",
-      CHECK_OK: `${p.customerName}: ₹${p.amount} pending`,
+      CHECK_OK: `👤 ${p.customerName}\n💰 Pending credit: ₹${p.amount}`,
       WAPAS_ERROR: "Name or amount is unclear for repayment entry.",
-      WAPAS_OK: `${p.customerName}: ₹${p.amount} received ✅ left ₹${p.remaining}`,
+      WAPAS_OK: `✅ Payment received!\n👤 ${p.customerName}\n💵 Paid: ₹${p.amount}\n📌 Remaining: ₹${p.remaining}`,
       UDHAAR_ERROR: "Name or amount is unclear for credit entry.",
-      UDHAAR_OK: `${p.customerName}: ₹${p.amount} credit added ✅`,
+      UDHAAR_OK: `✅ Done!\n👤 ${p.customerName}\n💸 Credit: ₹${p.amount}\n📌 Total: ₹${p.total}`,
       UNKNOWN: "Could not understand the message. Please try again.",
     },
   };
@@ -226,7 +262,7 @@ async function receiveWebhook(req, res) {
       }
 
       const lines = result.customers.map(
-        (item) => `${item.customerName}: Rs${formatAmount(item.total)}`,
+        (item) => `${item.customerName}: ₹${formatAmount(item.total)}`,
       );
       const replyText =
         buildText(language, "ALL_UDHAAR", {
@@ -486,11 +522,13 @@ async function receiveWebhook(req, res) {
       }
 
       await logUdhaar({ customerName, amount });
+      const latestTotal = await getCustomerUdhaarTotal({ customerName });
       await sendTextMessage({
         to: ownerWaId,
         text: buildText(language, "UDHAAR_OK", {
           customerName,
           amount: formatAmount(amount),
+          total: formatAmount(latestTotal),
         }),
       });
       return;
