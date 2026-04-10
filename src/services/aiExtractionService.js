@@ -2,7 +2,7 @@ const Groq = require("groq-sdk");
 const env = require("../config/env");
 
 const SYSTEM_PROMPT =
-  "Classify the user message into one intent from: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, UNKNOWN. Return ONLY JSON. For inventory extraction, support ANY grocery/food item name in Hindi/English/Hinglish dynamically (do not hardcode item names). Return keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For multi-item inventory messages, `items` should be an array like [{itemName, quantity, unit}, ...].";
+  "Classify the user message into one intent from: GREETING, LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, UNKNOWN. Return ONLY JSON. For inventory extraction, support ANY grocery/food item name in Hindi/English/Hinglish dynamically (do not hardcode item names). IMPORTANT: quantity must be full numeric value, never truncated to first digit (100 stays 100, 50 stays 50, 200 stays 200, 1000 stays 1000). Return keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For multi-item inventory messages, `items` should be an array like [{itemName, quantity, unit}, ...].";
 const ITEM_NORMALIZE_PROMPT =
   "Normalize grocery item names to a standard singular kirana form in lowercase. Keep only item name text. Map common variants to one standard (examples: chawal/rice/chaawal -> chawal, aata/atta/wheat flour -> aata, maggi/Maggi -> maggi). Return ONLY JSON: {\"normalizedItemName\":\"...\"}.";
 
@@ -97,15 +97,18 @@ function detectLanguageFromText(messageText) {
 }
 
 function parseNumberAndUnit(text) {
-  const compact = text.match(
-    /(\d+(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?\s*([^\s]+)?/i,
-  );
-  if (!compact) {
+  const input = String(text || "");
+  const quantityMatch = /(^|[^\d])(\d{1,9}(?:\.\d+)?)(?!\d)/.exec(input);
+  if (!quantityMatch) {
     return { quantity: null, unit: "pieces" };
   }
 
-  const quantity = Number(compact[1]);
-  const candidateUnit = String(compact[2] || compact[3] || "").toLowerCase().trim();
+  const quantity = Number(quantityMatch[2]);
+  const remaining = input.slice(quantityMatch.index + quantityMatch[0].length).trim();
+  const unitMatch = /^(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes|[^\s]+)/i.exec(
+    remaining,
+  );
+  const candidateUnit = String(unitMatch?.[1] || "").toLowerCase().trim();
   const unit = /^(aaya|aayi|aaye|got|received|added|add)$/.test(candidateUnit)
     ? "pieces"
     : candidateUnit || "pieces";
@@ -144,7 +147,7 @@ function parseInventoryPart(partText) {
   }
 
   const qFirst = part.match(
-    /(\d+(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?\s+(.+)/i,
+    /(\d{1,9}(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?\s+(.+)/i,
   );
   if (qFirst) {
     const quantity = Number(qFirst[1]);
@@ -156,7 +159,7 @@ function parseInventoryPart(partText) {
   }
 
   const qLast = part.match(
-    /(.+?)\s+(\d+(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?$/i,
+    /(.+?)\s+(\d{1,9}(?:\.\d+)?)\s*(kg|g|gm|gram|grams|ltr|l|ml|packet|packets|pcs|pc|piece|pieces|dozen|box|boxes)?$/i,
   );
   if (qLast) {
     const itemName = cleanupItemName(qLast[1]);
@@ -167,7 +170,7 @@ function parseInventoryPart(partText) {
     }
   }
 
-  const anyNumber = part.match(/(.+?)\s+(\d+(?:\.\d+)?)(?:\s+([^\s]+))?/i);
+  const anyNumber = part.match(/(.+?)\s+(\d{1,9}(?:\.\d+)?)(?:\s+([^\s]+))?/i);
   if (anyNumber) {
     const itemName = cleanupItemName(anyNumber[1]);
     const quantity = Number(anyNumber[2]);
