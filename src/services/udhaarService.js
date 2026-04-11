@@ -11,6 +11,21 @@ function normalizeName(value) {
     .trim();
 }
 
+function normalizeCustomerName(value) {
+  const text = String(value || "")
+    .toLowerCase()
+    // Remove common honorifics and suffixes
+    .replace(/\b(ji|bhai|ben|devi|sahab|sir|mr|mrs|ms)\b/gi, " ")
+    // Remove Hindi honorifics (devanagari)
+    .replace(/\b(ji|bhai|ben|devi|sahab|sir|mr|mrs|ms)\b/gu, " ")
+    // Remove special characters and extra spaces
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  
+  return text;
+}
+
 function namesSimilar(a, b) {
   const x = normalizeName(a);
   const y = normalizeName(b);
@@ -59,6 +74,7 @@ async function logWapas({ customerName, amount }) {
 }
 
 async function getCustomerUdhaarTotal({ customerName }) {
+  const normalizedSearchName = normalizeCustomerName(customerName);
   const { data, error } = await supabase
     .from("udhaar_logs")
     .select("customer_name,amount");
@@ -68,7 +84,12 @@ async function getCustomerUdhaarTotal({ customerName }) {
   }
 
   const total = (data || [])
-    .filter((row) => namesSimilar(row.customer_name, customerName))
+    .filter((row) => {
+      const normalizedRowName = normalizeCustomerName(row.customer_name);
+      return normalizedRowName === normalizedSearchName || 
+             normalizedRowName.includes(normalizedSearchName) || 
+             normalizedSearchName.includes(normalizedRowName);
+    })
     .reduce((sum, row) => sum + Number(row.amount || 0), 0);
   return total;
 }
@@ -110,6 +131,7 @@ async function getTodayHisaab() {
 }
 
 async function saveCustomerPhone({ customerName, phone }) {
+  const normalizedSearchName = normalizeCustomerName(customerName);
   const { data: existingRows, error: findError } = await supabase
     .from("customers")
     .select("id,customer_name");
@@ -118,9 +140,13 @@ async function saveCustomerPhone({ customerName, phone }) {
     throw new Error(`Supabase fetch failed: ${findError.message}`);
   }
 
-  const existing = (existingRows || []).find((row) =>
-    namesSimilar(row.customer_name, customerName),
-  );
+  const existing = (existingRows || []).find((row) => {
+    const normalizedRowName = normalizeCustomerName(row.customer_name);
+    return normalizedRowName === normalizedSearchName || 
+           normalizedRowName.includes(normalizedSearchName) || 
+           normalizedSearchName.includes(normalizedRowName);
+  });
+  
   if (existing?.id) {
     const { error: updateError } = await supabase
       .from("customers")
@@ -147,6 +173,7 @@ async function saveCustomerPhone({ customerName, phone }) {
 }
 
 async function getCustomerPhone({ customerName }) {
+  const normalizedSearchName = normalizeCustomerName(customerName);
   const { data, error } = await supabase
     .from("customers")
     .select("customer_name,phone_number");
@@ -155,7 +182,12 @@ async function getCustomerPhone({ customerName }) {
     throw new Error(`Supabase fetch failed: ${error.message}`);
   }
 
-  const matched = (data || []).find((row) => namesSimilar(row.customer_name, customerName));
+  const matched = (data || []).find((row) => {
+    const normalizedRowName = normalizeCustomerName(row.customer_name);
+    return normalizedRowName === normalizedSearchName || 
+           normalizedRowName.includes(normalizedSearchName) || 
+           normalizedSearchName.includes(normalizedRowName);
+  });
   return matched?.phone_number || null;
 }
 
@@ -169,18 +201,32 @@ async function getAllPendingUdhaar() {
   }
 
   const totalsMap = new Map();
+  const originalNameMap = new Map();
+  
   for (const row of data || []) {
-    const name = String(row.customer_name || "").trim();
-    if (!name) {
+    const originalName = String(row.customer_name || "").trim();
+    if (!originalName) {
       continue;
     }
+    
+    const normalizedName = normalizeCustomerName(originalName);
     const amount = Number(row.amount || 0);
-    const current = totalsMap.get(name) || 0;
-    totalsMap.set(name, current + amount);
+    
+    // Group by normalized name but keep track of original names
+    const current = totalsMap.get(normalizedName) || 0;
+    totalsMap.set(normalizedName, current + amount);
+    
+    // Store the first original name we encounter for this normalized name
+    if (!originalNameMap.has(normalizedName)) {
+      originalNameMap.set(normalizedName, originalName);
+    }
   }
 
   const customers = Array.from(totalsMap.entries())
-    .map(([customerName, total]) => ({ customerName, total }))
+    .map(([normalizedName, total]) => ({ 
+      customerName: originalNameMap.get(normalizedName) || normalizedName, 
+      total 
+    }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total);
 
@@ -345,4 +391,5 @@ module.exports = {
   getInventoryStock,
   getAllInventoryStock,
   getLowStockAlertInfo,
+  normalizeCustomerName,
 };
