@@ -4,7 +4,7 @@ const env = require("../config/env");
 const client = new Groq({ apiKey: env.groqApiKey });
 
 const SYSTEM_PROMPT =
-  "Classify kirana owner messages into exactly one intent: LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, GREETING, UNKNOWN. Return ONLY JSON with keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For inventory, extract full quantity number (never truncate digits), any item name, and unit. For multi-item lines return items array: [{itemName, quantity, unit}].";
+  "Classify kirana owner messages into exactly one intent: LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, GREETING, UNKNOWN. Return ONLY JSON with keys: intent, customerName, amount, phoneNumber, itemName, quantity, unit, items. For inventory, extract full quantity number (never truncate digits), any item name, and unit. For multi-item lines return items array: [{itemName, quantity, unit}]. IMPORTANT: 'kitna udhaar' or 'kitne udhaar' patterns are CHECK_UDHAAR intent - extract customerName before 'kitna' (e.g., 'Sharma ji kitna udhaar' -> intent: CHECK_UDHAAR, customerName: 'Sharma ji').";
 
 const ITEM_NORMALIZE_PROMPT =
   "Normalize kirana item to one standard lowercase Indian name. Examples: chawal/rice/chaawal -> chawal, aata/atta/wheat flour -> aata, maggi/Maggi -> maggi. Return ONLY JSON: {\"normalizedItemName\":\"...\"}.";
@@ -93,7 +93,7 @@ function parseInventoryPart(partText) {
   if (!part) {
     return null;
   }
-  const qFirst = new RegExp(`(\\d{1,9}(?:\\.\\d+)?)\\s*${UNIT_WORDS}?\\s+(.+)`, "i").exec(part);
+  const qFirst = new RegExp(`(\\d{1,9}(?:\\.\\d+)?)\\s*(${UNIT_WORDS})?\\s+(.+)`, "i").exec(part);
   if (qFirst) {
     const quantity = Number(qFirst[1]);
     const unit = String(qFirst[2] || "pieces").toLowerCase();
@@ -103,7 +103,7 @@ function parseInventoryPart(partText) {
     }
   }
 
-  const qLast = new RegExp(`(.+?)\\s+(\\d{1,9}(?:\\.\\d+)?)\\s*${UNIT_WORDS}?$`, "i").exec(part);
+  const qLast = new RegExp(`(.+?)\\s+(\\d{1,9}(?:\\.\\d+)?)\\s*(${UNIT_WORDS})?$`, "i").exec(part);
   if (qLast) {
     const itemName = cleanupItemName(qLast[1]);
     const quantity = Number(qLast[2]);

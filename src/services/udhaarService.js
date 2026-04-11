@@ -258,11 +258,13 @@ async function addInventoryStock({ itemName, quantity, unit }) {
 }
 
 async function getInventoryStock({ itemName }) {
-  const normalizedItemName = String(itemName || "").trim();
+  const normalizedItemName = String(itemName || "").trim().toLowerCase();
+  
+  // Try exact match first
   const { data: exactData, error: exactError } = await supabase
     .from(INVENTORY_TABLE)
     .select("*")
-    .ilike("item_name", normalizedItemName)
+    .eq("item_name", normalizedItemName)
     .limit(1)
     .maybeSingle();
 
@@ -274,6 +276,23 @@ async function getInventoryStock({ itemName }) {
     return exactData;
   }
 
+  // Try case-insensitive exact match
+  const { data: ilikeData, error: ilikeError } = await supabase
+    .from(INVENTORY_TABLE)
+    .select("*")
+    .ilike("item_name", normalizedItemName)
+    .limit(1)
+    .maybeSingle();
+
+  if (ilikeError) {
+    throw new Error(`Supabase fetch failed: ${ilikeError.message}`);
+  }
+
+  if (ilikeData) {
+    return ilikeData;
+  }
+
+  // Try fuzzy match
   const { data: fuzzyData, error: fuzzyError } = await supabase
     .from(INVENTORY_TABLE)
     .select("*")
