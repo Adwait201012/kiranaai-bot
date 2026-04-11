@@ -231,12 +231,12 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const total = await getCustomerUdhaarTotal({ customerName });
+          const remainingTotal = await getCustomerUdhaarTotal({ customerName });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "CHECK_UDHAAR", {
               name: customerName,
-              total: formatAmount(total)
+              total: formatAmount(remainingTotal)
             })
           });
           break;
