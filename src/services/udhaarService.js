@@ -415,6 +415,106 @@ function getLowStockAlertInfo(row) {
   }
 }
 
+async function logExpense({ category, amount, description }) {
+  try {
+    const { data, error } = await supabase
+      .from("expenses")
+      .insert([{
+        category: category || "general",
+        amount: Number(amount),
+        description: description || category,
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Supabase insert failed:', error.message);
+      throw new Error('Database mein dikkat hai, 1 minute mein try karo!');
+    }
+
+    return data;
+  } catch (error) {
+    console.error('logExpense error:', error.message);
+    throw error;
+  }
+}
+
+async function getTodayExpenses() {
+  try {
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("category,amount,description,created_at")
+      .gte("created_at", startOfDay.toISOString())
+      .lte("created_at", endOfDay.toISOString())
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error('Supabase fetch failed:', error.message);
+      throw new Error('Database mein dikkat hai, 1 minute mein try karo!');
+    }
+
+    const expenses = data || [];
+    const total = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    
+    return {
+      expenses,
+      total,
+      count: expenses.length
+    };
+  } catch (error) {
+    console.error('getTodayExpenses error:', error.message);
+    throw error;
+  }
+}
+
+async function getMonthlyExpenses() {
+  try {
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    endOfMonth.setHours(23, 59, 59, 999);
+
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("category,amount,description,created_at")
+      .gte("created_at", startOfMonth.toISOString())
+      .lte("created_at", endOfMonth.toISOString())
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error('Supabase fetch failed:', error.message);
+      throw new Error('Database mein dikkat hai, 1 minute mein try karo!');
+    }
+
+    const expenses = data || [];
+    const total = expenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    
+    // Group by category
+    const categoryTotals = expenses.reduce((acc, expense) => {
+      const category = expense.category || 'general';
+      acc[category] = (acc[category] || 0) + Number(expense.amount || 0);
+      return acc;
+    }, {});
+    
+    return {
+      expenses,
+      total,
+      count: expenses.length,
+      categoryTotals
+    };
+  } catch (error) {
+    console.error('getMonthlyExpenses error:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   logUdhaar,
   logWapas,
@@ -428,4 +528,7 @@ module.exports = {
   getAllInventoryStock,
   getLowStockAlertInfo,
   normalizeCustomerName,
+  logExpense,
+  getTodayExpenses,
+  getMonthlyExpenses,
 };

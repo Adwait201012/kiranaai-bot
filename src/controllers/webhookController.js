@@ -14,6 +14,9 @@ const {
   getInventoryStock,
   getAllInventoryStock,
   getLowStockAlertInfo,
+  logExpense,
+  getTodayExpenses,
+  getMonthlyExpenses,
 } = require("../services/udhaarService");
 const { sendTextMessage } = require("../services/whatsappService");
 const {
@@ -48,7 +51,7 @@ function normalizeCustomerPhone(phone) {
 // Hardcoded reply templates based on language
 const TEMPLATES = {
   hinglish: {
-    GREETING: "👋 Namaste! Main VyaparAI hun!\n\n💰 Udhaar log — Sharma ji 500 udhaar\n🔍 Check — Sharma ji kitna udhaar\n✅ Payment — Sharma ji 200 wapas\n📊 Hisaab — aaj ka hisaab\n👥 Sabka — sabka udhaar dikhao\n📦 Stock — chawal 50kg aaya\n📉 Stock check — chawal kitna hai\n📋 Sabka stock — sabka stock dikhao\n📱 Number — Sharma ji number 9876543210\n🔔 Reminder — Sharma ji ko remind karo",
+    GREETING: "👋 Namaste! Main BharatBahi hun — aapka WhatsApp business assistant!\nMain har tarah ki dukan ke liye kaam karta hun 🏪\n💰 Udhaar log — Sharma ji 500 udhaar\n🔍 Udhaar check — Sharma ji kitna udhaar\n✅ Payment liya — Sharma ji 200 wapas\n� Stock add — chawal 50kg aaya\n📉 Stock check — chawal kitna hai\n� Sabka stock — sabka stock dikhao\n� Kharcha log — bijli bill 500 diya\n� Aaj ka hisaab — aaj ka hisaab\n� Sabka udhaar — sabka udhaar dikhao\n📱 Number save — Sharma ji number 9876543210\n🔔 Reminder — Sharma ji ko remind karo\nHindi, English ya voice — jo bhi aapko easy lage! 🎙️",
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Udhaar: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Baaki: ₹{total}",
     LOG_WAPAS: "✅ Payment!\n👤 {name}\n💵 Wapas: ₹{amount}\n📌 Baaki: ₹{remaining}",
@@ -60,9 +63,12 @@ const TEMPLATES = {
     LOW_STOCK: "⚠️ Low stock!\n🏷️ {item}: sirf {qty}{unit} bacha!",
     SAVE_NUMBER: "✅ {name} ka number save!",
     SEND_REMINDER: "✅ {name} ko reminder bhej diya!\n💰 Udhaar: ₹{total}",
+    LOG_EXPENSE: "✅ Kharcha noted!\n💸 {category}: ₹{amount}\n📌 Aaj ka total kharcha: ₹{total}",
+    CHECK_EXPENSE: "💸 Kharcha summary:\n{list}\n📌 Total: ₹{total}",
     UNKNOWN: "🤔 Samajh nahi aaya. Hi bhejo to main sab features dikhaunga!",
     ERRORS: {
-      DATABASE: "Sorry, database error. Try again!",
+      NETWORK: "Thoda network issue hai, dobara try karo!",
+      DATABASE: "Database mein dikkat hai, 1 minute mein try karo!",
       NAME_REQUIRED: "Customer name required!",
       AMOUNT_REQUIRED: "Amount required!",
       ITEM_REQUIRED: "Item name required!",
@@ -71,7 +77,7 @@ const TEMPLATES = {
     }
   },
   english: {
-    GREETING: "👋 Hello! I am VyaparAI!\n\n💰 Log credit — Sharma ji 500 udhaar\n🔍 Check credit — Sharma ji kitna udhaar\n✅ Payment received — Sharma ji 200 wapas\n📊 Today summary — aaj ka hisaab\n👥 All credit — sabka udhaar dikhao\n📦 Add stock — chawal 50kg aaya\n📉 Check stock — chawal kitna hai\n📋 All stock — sabka stock dikhao\n📱 Save number — Sharma ji number 9876543210\n🔔 Reminder — Sharma ji ko remind karo",
+    GREETING: "👋 Hello! I am BharatBahi — your WhatsApp business assistant!\nI work for all types of businesses 🏪\n💰 Log credit — Sharma ji 500 udhaar\n🔍 Check credit — Sharma ji kitna udhaar\n✅ Payment received — Sharma ji 200 wapas\n� Add stock — chawal 50kg aaya\n📉 Check stock — chawal kitna hai\n� All stock — sabka stock dikhao\n� Log expense — bijli bill 500 diya\n� Today summary — aaj ka hisaab\n� All credit — sabka udhaar dikhao\n📱 Save number — Sharma ji number 9876543210\n🔔 Reminder — Sharma ji ko remind karo\nHindi, English or voice — whatever works for you! 🎙️",
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Credit: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Pending: ₹{total}",
     LOG_WAPAS: "✅ Payment received!\n👤 {name}\n💵 Paid: ₹{amount}\n📌 Remaining: ₹{remaining}",
@@ -83,9 +89,12 @@ const TEMPLATES = {
     LOW_STOCK: "⚠️ Low stock!\n🏷️ {item}: only {qty}{unit} left!",
     SAVE_NUMBER: "✅ {name} number saved!",
     SEND_REMINDER: "✅ Reminder sent to {name}!\n💰 Credit: ₹{total}",
+    LOG_EXPENSE: "✅ Expense noted!\n💸 {category}: ₹{amount}\n📌 Today's total expense: ₹{total}",
+    CHECK_EXPENSE: "💸 Expense summary:\n{list}\n📌 Total: ₹{total}",
     UNKNOWN: "🤔 Could not understand. Send 'hi' to see all features!",
     ERRORS: {
-      DATABASE: "Sorry, database error. Try again!",
+      NETWORK: "Network issue, please try again!",
+      DATABASE: "Database issue, please try again in 1 minute!",
       NAME_REQUIRED: "Customer name required!",
       AMOUNT_REQUIRED: "Amount required!",
       ITEM_REQUIRED: "Item name required!",
@@ -94,7 +103,7 @@ const TEMPLATES = {
     }
   },
   hindi: {
-    GREETING: "👋 नमस्ते! मैं VyaparAI हूं!\n\n💰 उधार लॉग — शर्मा जी 500 उधार\n🔍 उधार चेक — शर्मा जी कितना उधार\n✅ पेमेंट लिया — शर्मा जी 200 वापस\n📊 आज का हिसाब — आज का हिसाब\n👥 सबका उधार — सबका उधार दिखाओ\n📦 स्टॉक जोड़ें — चावल 50kg आया\n📉 स्टॉक चेक — चावल कितना है\n📋 सबका स्टॉक — सबका स्टॉक दिखाओ\n📱 नंबर सेव — शर्मा जी number 9876543210\n🔔 रिमाइंडर — शर्मा जी को remind करो",
+    GREETING: "👋 नमस्ते! मैं BharatBahi हूं — आपका WhatsApp business assistant!\nमैं हर तरह की दुकान के लिए काम करता हूं 🏪\n💰 उधार लॉग — शर्मा जी 500 उधार\n🔍 उधार चेक — शर्मा जी कितना उधार\n✅ पेमेंट लिया — शर्मा जी 200 वापस\n📦 स्टॉक जोड़ें — चावल 50kg आया\n📉 स्टॉक चेक — चावल कितना है\n📋 सबका स्टॉक — सबका स्टॉक दिखाओ\n💸 खर्चा लॉग — बिजली बिल 500 दिया\n📊 आज का हिसाब — आज का हिसाब\n👥 सबका उधार — सबका उधार दिखाओ\n📱 नंबर सेव — शर्मा जी number 9876543210\n🔔 रिमाइंडर — शर्मा जी को remind करो\nहिंदी, अंग्रेजी या voice — जो भी आपको आसान लगे! 🎙️",
     LOG_UDHAAR: "✅ हो गया!\n👤 {name}\n💸 उधार: ₹{amount}\n📌 कुल: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 बाकी: ₹{total}",
     LOG_WAPAS: "✅ पेमेंट प्राप्त!\n👤 {name}\n💵 वापस: ₹{amount}\n📌 बाकी: ₹{remaining}",
@@ -106,9 +115,12 @@ const TEMPLATES = {
     LOW_STOCK: "⚠️ कम स्टॉक!\n🏷️ {item}: सिर्फ {qty}{unit} बचा है!",
     SAVE_NUMBER: "✅ {name} का नंबर सेव!",
     SEND_REMINDER: "✅ {name} को रिमाइंडर भेज दिया!\n💰 उधार: ₹{total}",
+    LOG_EXPENSE: "✅ खर्चा नोट किया!\n💸 {category}: ₹{amount}\n📌 आज का कुल खर्चा: ₹{total}",
+    CHECK_EXPENSE: "💸 खर्चा सारांश:\n{list}\n📌 कुल: ₹{total}",
     UNKNOWN: "🤔 समझ नहीं आया। हाय भेजें तो मैं सभी फीचर्स दिखाऊंगा!",
     ERRORS: {
-      DATABASE: "क्षमा करें, डेटाबेस त्रुटि। फिर से कोशिश करें!",
+      NETWORK: "थोड़ा network issue है, दोबारा try करो!",
+      DATABASE: "Database में दिक्कत है, 1 minute में try करो!",
       NAME_REQUIRED: "ग्राहक नाम आवश्यक!",
       AMOUNT_REQUIRED: "राशि आवश्यक!",
       ITEM_REQUIRED: "आइटम नाम आवश्यक!",
@@ -132,7 +144,7 @@ function getTemplate(language, key, params = {}) {
 
 function getErrorTemplate(language, errorKey) {
   const lang = TEMPLATES[language] || TEMPLATES.hinglish;
-  return lang.ERRORS[errorKey] || lang.ERRORS.DATABASE;
+  return lang.ERRORS[errorKey] || lang.ERRORS.NETWORK;
 }
 
 async function receiveWebhook(req, res) {
@@ -159,7 +171,7 @@ async function receiveWebhook(req, res) {
         console.error('Audio transcription failed:', error.message);
         await sendTextMessage({
           to: ownerWaId,
-          text: getErrorTemplate('hinglish', 'DATABASE')
+          text: getErrorTemplate('hinglish', 'NETWORK')
         });
         return;
       }
@@ -177,7 +189,7 @@ async function receiveWebhook(req, res) {
       console.error('Groq detection failed:', error.message);
       await sendTextMessage({
         to: ownerWaId,
-        text: getErrorTemplate('hinglish', 'DATABASE')
+        text: getErrorTemplate('hinglish', 'NETWORK')
       });
       return;
     }
@@ -190,6 +202,7 @@ async function receiveWebhook(req, res) {
       quantity,
       unit,
       phoneNumber,
+      expenseCategory,
       language = "hinglish"
     } = aiResult;
 
@@ -439,6 +452,54 @@ async function receiveWebhook(req, res) {
           });
           break;
 
+        case "LOG_EXPENSE":
+          if (!amount || amount <= 0) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getErrorTemplate(language, 'AMOUNT_REQUIRED')
+            });
+            return;
+          }
+          await logExpense({ 
+            category: expenseCategory || "general", 
+            amount, 
+            description: expenseCategory || "general" 
+          });
+          const todayExpenses = await getTodayExpenses();
+          await sendTextMessage({
+            to: ownerWaId,
+            text: getTemplate(language, "LOG_EXPENSE", {
+              category: expenseCategory || "general",
+              amount: formatAmount(amount),
+              total: formatAmount(todayExpenses.total)
+            })
+          });
+          break;
+
+        case "CHECK_EXPENSE":
+          const expenseData = await getTodayExpenses();
+          if (!expenseData.expenses.length) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getTemplate(language, "CHECK_EXPENSE", {
+                list: "Aaj koi kharcha nahi hua",
+                total: "0"
+              })
+            });
+          } else {
+            const expenseList = expenseData.expenses
+              .map(expense => `${expense.category}: ${formatAmount(expense.amount)}`)
+              .join("\n");
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getTemplate(language, "CHECK_EXPENSE", {
+                list: expenseList,
+                total: formatAmount(expenseData.total)
+              })
+            });
+          }
+          break;
+
         default:
           await sendTextMessage({
             to: ownerWaId,
@@ -459,7 +520,7 @@ async function receiveWebhook(req, res) {
     if (ownerWaId) {
       await sendTextMessage({
         to: ownerWaId,
-        text: getErrorTemplate('hinglish', 'DATABASE')
+        text: getErrorTemplate('hinglish', 'NETWORK')
       });
     }
   }

@@ -3,31 +3,39 @@ const env = require("../config/env");
 
 const client = new Groq({ apiKey: env.groqApiKey });
 
-const SYSTEM_PROMPT = `You are VyaparAI intent detector for Indian kirana stores. Analyze the message and return ONLY valid JSON with no extra text:
+const SYSTEM_PROMPT = `You are BharatBahi, an AI business assistant for Indian small business owners (MSMEs). You work inside WhatsApp. Understand messages in Hindi, English and Hinglish. Detect intent and return ONLY valid JSON:
 {
-  intent: one of [LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, GREETING, UNKNOWN],
+  intent: one of [LOG_UDHAAR, CHECK_UDHAAR, LOG_WAPAS, TODAY_HISAAB, SABKA_UDHAAR, SAVE_NUMBER, SEND_REMINDER, INVENTORY_ADD, CHECK_STOCK, ALL_STOCK, LOG_EXPENSE, CHECK_EXPENSE, GREETING, UNKNOWN],
   customerName: string or null,
   amount: number or null,
   itemName: string or null,
   quantity: number or null,
   unit: string or null,
   phoneNumber: string or null,
+  expenseCategory: string or null,
   language: one of [hindi, hinglish, english]
 }
 
 Rules:
 
-Extract FULL numbers correctly: 100kg = quantity 100, unit kg. Never extract partial numbers.
-Normalize item names to Hindi: rice=chawal, wheat=aata, oil=tel
-Customer name fuzzy: Sharma=sharma ji=Sharma Ji all same person
-Language: pure Hindi script = hindi, English only = english, mixed = hinglish
-If unclear return intent UNKNOWN
+Extract FULL numbers correctly: 100kg = quantity 100 unit kg
+Person names → udhaar intents. Product/item names → inventory intents
+Expense examples: 'bijli bill 500 diya', 'rent 5000 gaya', 'staff ko 2000 diya' → LOG_EXPENSE
+Normalize items: rice=chawal, wheat=aata, oil=tel
+Customer fuzzy match: Sharma=sharma ji=Sharma Ji = same person
+Language: Hindi script = hindi, English only = english, mixed = hinglish
+Never return partial numbers
+If unclear return UNKNOWN
 
 Examples:
-"Sharma ji kitna udhaar" -> {"intent": "CHECK_UDHAAR", "customerName": "Sharma ji", "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "language": "hinglish"}
-"chawal kitna hai" -> {"intent": "CHECK_STOCK", "customerName": null, "amount": null, "itemName": "chawal", "quantity": null, "unit": null, "phoneNumber": null, "language": "hinglish"}
-"aata 50kg aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "aata", "quantity": 50, "unit": "kg", "phoneNumber": null, "language": "hinglish"}
-"Sharma ji 500 udhaar" -> {"intent": "LOG_UDHAAR", "customerName": "Sharma ji", "amount": 500, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "language": "hinglish"}`;
+"Sharma ji kitna udhaar" -> {"intent": "CHECK_UDHAAR", "customerName": "Sharma ji", "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"chawal kitna hai" -> {"intent": "CHECK_STOCK", "customerName": null, "amount": null, "itemName": "chawal", "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"aata 50kg aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "aata", "quantity": 50, "unit": "kg", "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"Sharma ji 500 udhaar" -> {"intent": "LOG_UDHAAR", "customerName": "Sharma ji", "amount": 500, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"bijli bill 500 diya" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 500, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "bijli bill", "language": "hinglish"}
+"rent 5000 gaya" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 5000, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "rent", "language": "hinglish"}
+"staff salary 10000" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 10000, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "staff salary", "language": "hinglish"}
+"aaj ka kharcha" -> {"intent": "CHECK_EXPENSE", "customerName": null, "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}`;
 
 const ITEM_NORMALIZATION_MAP = {
   'rice': 'chawal',
@@ -158,6 +166,7 @@ async function detectIntent(messageText) {
     quantity: parsed.quantity ? Number(parsed.quantity) : null,
     unit: parsed.unit ? String(parsed.unit).toLowerCase() : null,
     phoneNumber: parsed.phoneNumber ? String(parsed.phoneNumber).trim() : null,
+    expenseCategory: parsed.expenseCategory ? String(parsed.expenseCategory).trim() : null,
     language: parsed.language || detectLanguage(messageText)
   };
 }
