@@ -16,8 +16,25 @@ const SYSTEM_PROMPT = `You are BharatBahi, an AI business assistant for Indian s
   language: one of [hindi, hinglish, english]
 }
 
-Rules:
+CRITICAL RULE for intent detection:
 
+If message contains words like 'aaya', 'aai', 'stock', 'maal', 'order', 'received', 'purchased', 'bought', 'mangaya' -> it is ALWAYS INVENTORY_ADD regardless of item name
+Examples of INVENTORY_ADD:
+'paracetamol 100 strips aaya' -> INVENTORY_ADD
+'notebook 50 pieces aaya' -> INVENTORY_ADD
+'pen 200 aaya' -> INVENTORY_ADD
+'sanitizer 20 bottles aaya' -> INVENTORY_ADD
+'cement 10 bags aaya' -> INVENTORY_ADD
+'shampoo 30 bottles aai' -> INVENTORY_ADD
+'chawal 50kg aaya' -> INVENTORY_ADD
+
+If message contains 'udhaar', 'baaki', 'udhar', 'credit' -> CHECK or LOG udhaar
+If message contains person name + amount -> LOG_UDHAAR
+If message contains item name + 'kitna hai' or 'stock kitna' -> CHECK_STOCK
+NEVER treat an item/product as a person name
+Key difference: person names are human names (Sharma, Ramesh, Mohan). Products are things you can buy/sell (medicines, stationery, food, hardware, clothing)
+
+Additional Rules:
 Extract FULL numbers correctly: 100kg = quantity 100 unit kg
 Person names → udhaar intents. Product/item names → inventory intents
 Expense examples: 'bijli bill 500 diya', 'rent 5000 gaya', 'staff ko 2000 diya' → LOG_EXPENSE
@@ -29,13 +46,17 @@ If unclear return UNKNOWN
 
 Examples:
 "Sharma ji kitna udhaar" -> {"intent": "CHECK_UDHAAR", "customerName": "Sharma ji", "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
-"chawal kitna hai" -> {"intent": "CHECK_STOCK", "customerName": null, "amount": null, "itemName": "chawal", "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
-"aata 50kg aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "aata", "quantity": 50, "unit": "kg", "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"paracetamol kitna hai" -> {"intent": "CHECK_STOCK", "customerName": null, "amount": null, "itemName": "paracetamol", "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"notebook 50 pieces aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "notebook", "quantity": 50, "unit": "pieces", "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
 "Sharma ji 500 udhaar" -> {"intent": "LOG_UDHAAR", "customerName": "Sharma ji", "amount": 500, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"pen 200 aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "pen", "quantity": 200, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"sanitizer 20 bottles aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "sanitizer", "quantity": 20, "unit": "bottles", "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+"chawal 50kg aaya" -> {"intent": "INVENTORY_ADD", "customerName": null, "amount": null, "itemName": "chawal", "quantity": 50, "unit": "kg", "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
 "bijli bill 500 diya" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 500, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "bijli bill", "language": "hinglish"}
 "rent 5000 gaya" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 5000, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "rent", "language": "hinglish"}
 "staff salary 10000" -> {"intent": "LOG_EXPENSE", "customerName": null, "amount": 10000, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": "staff salary", "language": "hinglish"}
-"aaj ka kharcha" -> {"intent": "CHECK_EXPENSE", "customerName": null, "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}`;
+"aaj ka kharcha" -> {"intent": "CHECK_EXPENSE", "customerName": null, "amount": null, "itemName": null, "quantity": null, "unit": null, "phoneNumber": null, "expenseCategory": null, "language": "hinglish"}
+`;
 
 const ITEM_NORMALIZATION_MAP = {
   'rice': 'chawal',
