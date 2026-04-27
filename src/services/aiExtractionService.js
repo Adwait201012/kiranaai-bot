@@ -44,9 +44,11 @@ Keep brand name if mentioned
 Keep flavor/variant if it differentiates (lays red vs lays green are different)
 Make lowercase
 Max 3-4 words
+TRANSLITERATE any Hindi/regional words to English script (e.g., 'मैगी' → 'maggi', 'चावल' → 'chawal'). All output MUST be in English alphabet.
 Examples:
 'lays red packet chips' → 'lays red'
 'lal red packet chips lays' → 'lays red'
+'मैगी' → 'maggi'
 'Maggi 2 minute noodles' → 'maggi noodles'
 'paracetamol 500mg strips' → 'paracetamol 500mg'
 'Dettol soap bar' → 'dettol soap'
@@ -198,7 +200,7 @@ async function detectIntent(messageText) {
     unit: parsed.unit ? String(parsed.unit).toLowerCase() : null,
     phoneNumber: parsed.phoneNumber ? String(parsed.phoneNumber).trim() : null,
     expenseCategory: parsed.expenseCategory ? String(parsed.expenseCategory).trim() : null,
-    language: parsed.language || detectLanguage(messageText)
+    language: parsed.language ? String(parsed.language).toLowerCase() : detectLanguage(messageText)
   };
 }
 

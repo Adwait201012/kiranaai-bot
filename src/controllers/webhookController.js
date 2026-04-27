@@ -48,6 +48,20 @@ function normalizeCustomerPhone(phone) {
   return `+${digits}`;
 }
 
+function formatUnit(quantity, unit, language) {
+  let u = String(unit || "").trim();
+  if (!u) return "";
+  
+  if (language === 'english' && Number(quantity) > 1) {
+    if (u === 'packet') u = 'packets';
+    else if (u === 'piece') u = 'pieces';
+    else if (u === 'box') u = 'boxes';
+    else if (u === 'bottle') u = 'bottles';
+  }
+  
+  return ` ${u}`;
+}
+
 // Hardcoded reply templates based on language
 const TEMPLATES = {
   hinglish: {
@@ -83,8 +97,8 @@ const TEMPLATES = {
     LOG_WAPAS: "✅ Payment received!\n👤 {name}\n💵 Paid: ₹{amount}\n📌 Remaining: ₹{remaining}",
     TODAY_HISAAB: "📊 Today's summary\n💸 Credit: ₹{newUdhaar}\n✅ Received: ₹{wapasReceived}\n📌 Net: ₹{net}",
     SABKA_UDHAAR: "👥 All credit:\n{list}\n💰 Total: ₹{total}",
-    INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{unit}",
-    CHECK_STOCK: "📦 {item}\n📊 Stock: {qty}{unit}",
+    INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{totalUnit}",
+    CHECK_STOCK: "Stock: {qty}{unit}",
     ALL_STOCK: "📋 All stock:\n{list}",
     LOW_STOCK: "⚠️ Low stock!\n🏷️ {item}: only {qty}{unit} left!",
     SAVE_NUMBER: "✅ {name} number saved!",
@@ -319,14 +333,14 @@ async function receiveWebhook(req, res) {
             return;
           }
           const row = await addInventoryStock({ itemName, quantity, unit });
-          const unitText = row.unit ? ` ${row.unit}` : "";
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "INVENTORY_ADD", {
               item: row.item_name || itemName,
               qty: formatAmount(quantity),
-              unit: unitText,
-              total: formatAmount(row.quantity)
+              unit: formatUnit(quantity, row.unit, language),
+              total: formatAmount(row.quantity),
+              totalUnit: formatUnit(row.quantity, row.unit, language)
             })
           });
           
@@ -363,13 +377,12 @@ async function receiveWebhook(req, res) {
               })
             });
           } else {
-            const stockUnitText = stock.unit ? ` ${stock.unit}` : "";
             await sendTextMessage({
               to: ownerWaId,
               text: getTemplate(language, "CHECK_STOCK", {
                 item: stock.item_name || itemName,
                 qty: formatAmount(stock.quantity),
-                unit: stockUnitText
+                unit: formatUnit(stock.quantity, stock.unit, language)
               })
             });
           }
@@ -388,8 +401,8 @@ async function receiveWebhook(req, res) {
             const stockList = allStock
               .map(row => {
                 const qty = formatAmount(row.quantity);
-                const unit = row.unit ? ` ${row.unit}` : "";
-                return `${row.item_name}: ${qty}${unit}`;
+                const u = formatUnit(row.quantity, row.unit, language);
+                return `${row.item_name}: ${qty}${u}`;
               })
               .join("\n");
             await sendTextMessage({
