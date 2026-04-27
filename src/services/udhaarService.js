@@ -29,14 +29,14 @@ function normalizeCustomerName(customerName) {
     .trim();
 }
 
-async function logUdhaar({ customerName, amount }) {
+async function logUdhaar({ customerName, amount, ownerPhone }) {
   try {
-    const normalizedName = normalizeCustomerName(customerName) || customerName;
     const { data, error } = await supabase
       .from("udhaar_logs")
       .insert([{
         customer_name: customerName,
         amount: Number(amount),
+        owner_phone: ownerPhone,
       }])
       .select()
       .single();
@@ -53,14 +53,14 @@ async function logUdhaar({ customerName, amount }) {
   }
 }
 
-async function logWapas({ customerName, amount }) {
+async function logWapas({ customerName, amount, ownerPhone }) {
   try {
-    const normalizedName = normalizeCustomerName(customerName) || customerName;
     const { data, error } = await supabase
       .from("udhaar_logs")
       .insert([{
         customer_name: customerName,
         amount: -Math.abs(Number(amount)),
+        owner_phone: ownerPhone,
       }])
       .select()
       .single();
@@ -77,12 +77,13 @@ async function logWapas({ customerName, amount }) {
   }
 }
 
-async function getCustomerUdhaarTotal({ customerName }) {
+async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
   try {
     const normalizedSearchName = normalizeCustomerName(customerName);
     const { data, error } = await supabase
       .from("udhaar_logs")
-      .select("customer_name,amount");
+      .select("customer_name,amount")
+      .eq("owner_phone", ownerPhone);
 
     if (error) {
       console.error('Supabase fetch failed:', error.message);
@@ -104,7 +105,7 @@ async function getCustomerUdhaarTotal({ customerName }) {
   }
 }
 
-async function getTodayHisaab() {
+async function getTodayHisaab({ ownerPhone }) {
   try {
     const now = new Date();
     const startOfDay = new Date(now);
@@ -116,6 +117,7 @@ async function getTodayHisaab() {
     const { data, error } = await supabase
       .from("udhaar_logs")
       .select("amount,created_at")
+      .eq("owner_phone", ownerPhone)
       .gte("created_at", startOfDay.toISOString())
       .lte("created_at", endOfDay.toISOString());
 
@@ -146,12 +148,13 @@ async function getTodayHisaab() {
   }
 }
 
-async function saveCustomerPhone({ customerName, phone }) {
+async function saveCustomerPhone({ customerName, phone, ownerPhone }) {
   try {
     const normalizedSearchName = normalizeCustomerName(customerName);
     const { data: existingRows, error: findError } = await supabase
       .from("customers")
-      .select("id,customer_name");
+      .select("id,customer_name")
+      .eq("owner_phone", ownerPhone);
 
     if (findError) {
       console.error('Supabase fetch failed:', findError.message);
@@ -169,7 +172,8 @@ async function saveCustomerPhone({ customerName, phone }) {
       const { error: updateError } = await supabase
         .from("customers")
         .update({ customer_name: customerName, phone_number: phone })
-        .eq("id", existing.id);
+        .eq("id", existing.id)
+        .eq("owner_phone", ownerPhone);
 
       if (updateError) {
         console.error('Supabase update failed:', updateError.message);
@@ -180,7 +184,7 @@ async function saveCustomerPhone({ customerName, phone }) {
 
     const { data, error } = await supabase
       .from("customers")
-      .insert([{ customer_name: customerName, phone_number: phone }])
+      .insert([{ customer_name: customerName, phone_number: phone, owner_phone: ownerPhone }])
       .select()
       .single();
 
@@ -196,12 +200,13 @@ async function saveCustomerPhone({ customerName, phone }) {
   }
 }
 
-async function getCustomerPhone({ customerName }) {
+async function getCustomerPhone({ customerName, ownerPhone }) {
   try {
     const normalizedSearchName = normalizeCustomerName(customerName);
     const { data, error } = await supabase
       .from("customers")
-      .select("customer_name,phone_number");
+      .select("customer_name,phone_number")
+      .eq("owner_phone", ownerPhone);
 
     if (error) {
       console.error('Supabase fetch failed:', error.message);
@@ -221,11 +226,12 @@ async function getCustomerPhone({ customerName }) {
   }
 }
 
-async function getAllPendingUdhaar() {
+async function getAllPendingUdhaar({ ownerPhone }) {
   try {
     const { data, error } = await supabase
       .from("udhaar_logs")
       .select("customer_name,amount,created_at")
+      .eq("owner_phone", ownerPhone)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -272,7 +278,7 @@ async function getAllPendingUdhaar() {
   }
 }
 
-async function addInventoryStock({ itemName, quantity, unit }) {
+async function addInventoryStock({ itemName, quantity, unit, ownerPhone }) {
   try {
     // Step 1: Normalize via Groq FIRST — before any DB operation
     // Both "lays red packet chips" and "lal red packet chips lays" → "lays red"
@@ -289,6 +295,7 @@ async function addInventoryStock({ itemName, quantity, unit }) {
     const { data: existing, error: findError } = await supabase
       .from("inventory")
       .select("id,item_name,quantity,unit,low_stock_threshold")
+      .eq("owner_phone", ownerPhone)
       .ilike("item_name", normalizedItemName)
       .limit(1)
       .maybeSingle();
@@ -310,6 +317,7 @@ async function addInventoryStock({ itemName, quantity, unit }) {
           unit: normalizedUnit || existing.unit || "pieces",
         })
         .eq("id", existing.id)
+        .eq("owner_phone", ownerPhone)
         .select("*")
         .single();
 
@@ -330,6 +338,7 @@ async function addInventoryStock({ itemName, quantity, unit }) {
           quantity: Number(quantity || 0),
           unit: normalizedUnit || "pieces",
           low_stock_threshold: DEFAULT_LOW_STOCK_THRESHOLD,
+          owner_phone: ownerPhone,
         }])
         .select("*")
         .single();
@@ -347,7 +356,7 @@ async function addInventoryStock({ itemName, quantity, unit }) {
   }
 }
 
-async function getInventoryStock({ itemName }) {
+async function getInventoryStock({ itemName, ownerPhone }) {
   try {
     // Step 1: Normalize via Groq — same normalization as addInventoryStock
     // ensures CHECK_STOCK resolves any variant to the canonical stored name
@@ -360,6 +369,7 @@ async function getInventoryStock({ itemName }) {
     const { data: ilikeData, error: ilikeError } = await supabase
       .from("inventory")
       .select("*")
+      .eq("owner_phone", ownerPhone)
       .ilike("item_name", normalizedItemName)
       .limit(1)
       .maybeSingle();
@@ -377,6 +387,7 @@ async function getInventoryStock({ itemName }) {
     const { data: fuzzyData, error: fuzzyError } = await supabase
       .from("inventory")
       .select("*")
+      .eq("owner_phone", ownerPhone)
       .ilike("item_name", `%${normalizedItemName}%`)
       .limit(1)
       .maybeSingle();
@@ -393,11 +404,12 @@ async function getInventoryStock({ itemName }) {
   }
 }
 
-async function getAllInventoryStock() {
+async function getAllInventoryStock({ ownerPhone }) {
   try {
     const { data, error } = await supabase
       .from("inventory")
       .select("*")
+      .eq("owner_phone", ownerPhone)
       .order("item_name", { ascending: true });
 
     if (error) {
@@ -436,7 +448,7 @@ function getLowStockAlertInfo(row) {
   }
 }
 
-async function logExpense({ category, amount, description }) {
+async function logExpense({ category, amount, description, ownerPhone }) {
   try {
     const { data, error } = await supabase
       .from("expenses")
@@ -444,6 +456,7 @@ async function logExpense({ category, amount, description }) {
         category: category || "general",
         amount: Number(amount),
         description: description || category,
+        owner_phone: ownerPhone,
       }])
       .select()
       .single();
@@ -460,7 +473,7 @@ async function logExpense({ category, amount, description }) {
   }
 }
 
-async function getTodayExpenses() {
+async function getTodayExpenses({ ownerPhone }) {
   try {
     const now = new Date();
     const startOfDay = new Date(now);
@@ -472,6 +485,7 @@ async function getTodayExpenses() {
     const { data, error } = await supabase
       .from("expenses")
       .select("category,amount,description,created_at")
+      .eq("owner_phone", ownerPhone)
       .gte("created_at", startOfDay.toISOString())
       .lte("created_at", endOfDay.toISOString())
       .order("created_at", { ascending: false });
@@ -495,7 +509,7 @@ async function getTodayExpenses() {
   }
 }
 
-async function getMonthlyExpenses() {
+async function getMonthlyExpenses({ ownerPhone }) {
   try {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -505,6 +519,7 @@ async function getMonthlyExpenses() {
     const { data, error } = await supabase
       .from("expenses")
       .select("category,amount,description,created_at")
+      .eq("owner_phone", ownerPhone)
       .gte("created_at", startOfMonth.toISOString())
       .lte("created_at", endOfMonth.toISOString())
       .order("created_at", { ascending: false });

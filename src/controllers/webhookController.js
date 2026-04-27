@@ -238,8 +238,8 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          await logUdhaar({ customerName, amount });
-          const total = await getCustomerUdhaarTotal({ customerName });
+          await logUdhaar({ customerName, amount, ownerPhone: ownerWaId });
+          const total = await getCustomerUdhaarTotal({ customerName, ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_UDHAAR", {
@@ -258,7 +258,7 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const remainingTotal = await getCustomerUdhaarTotal({ customerName });
+          const remainingTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "CHECK_UDHAAR", {
@@ -276,8 +276,8 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          await logWapas({ customerName, amount });
-          const remaining = await getCustomerUdhaarTotal({ customerName });
+          await logWapas({ customerName, amount, ownerPhone: ownerWaId });
+          const remaining = await getCustomerUdhaarTotal({ customerName, ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_WAPAS", {
@@ -289,7 +289,7 @@ async function receiveWebhook(req, res) {
           break;
 
         case "TODAY_HISAAB":
-          const today = await getTodayHisaab();
+          const today = await getTodayHisaab({ ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "TODAY_HISAAB", {
@@ -301,7 +301,7 @@ async function receiveWebhook(req, res) {
           break;
 
         case "SABKA_UDHAAR":
-          const result = await getAllPendingUdhaar();
+          const result = await getAllPendingUdhaar({ ownerPhone: ownerWaId });
           if (!result.customers.length) {
             await sendTextMessage({
               to: ownerWaId,
@@ -332,7 +332,7 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const row = await addInventoryStock({ itemName, quantity, unit });
+          const row = await addInventoryStock({ itemName, quantity, unit, ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "INVENTORY_ADD", {
@@ -366,7 +366,7 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const stock = await getInventoryStock({ itemName });
+          const stock = await getInventoryStock({ itemName, ownerPhone: ownerWaId });
           if (!stock) {
             await sendTextMessage({
               to: ownerWaId,
@@ -389,7 +389,7 @@ async function receiveWebhook(req, res) {
           break;
 
         case "ALL_STOCK":
-          const allStock = await getAllInventoryStock();
+          const allStock = await getAllInventoryStock({ ownerPhone: ownerWaId });
           if (!allStock.length) {
             await sendTextMessage({
               to: ownerWaId,
@@ -424,7 +424,8 @@ async function receiveWebhook(req, res) {
           }
           await saveCustomerPhone({
             customerName,
-            phone: normalizeCustomerPhone(phoneNumber)
+            phone: normalizeCustomerPhone(phoneNumber),
+            ownerPhone: ownerWaId
           });
           await sendTextMessage({
             to: ownerWaId,
@@ -442,7 +443,7 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const customerPhone = await getCustomerPhone({ customerName });
+          const customerPhone = await getCustomerPhone({ customerName, ownerPhone: ownerWaId });
           if (!customerPhone) {
             await sendTextMessage({
               to: ownerWaId,
@@ -450,7 +451,7 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
-          const reminderTotal = await getCustomerUdhaarTotal({ customerName });
+          const reminderTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: ownerWaId });
           const reminderText = getTemplate(language, "REMINDER_CUSTOMER", {
             customerName,
             amount: formatAmount(reminderTotal)
@@ -476,9 +477,10 @@ async function receiveWebhook(req, res) {
           await logExpense({ 
             category: expenseCategory || "general", 
             amount, 
-            description: expenseCategory || "general" 
+            description: expenseCategory || "general",
+            ownerPhone: ownerWaId
           });
-          const todayExpenses = await getTodayExpenses();
+          const todayExpenses = await getTodayExpenses({ ownerPhone: ownerWaId });
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_EXPENSE", {
@@ -490,7 +492,7 @@ async function receiveWebhook(req, res) {
           break;
 
         case "CHECK_EXPENSE":
-          const expenseData = await getTodayExpenses();
+          const expenseData = await getTodayExpenses({ ownerPhone: ownerWaId });
           if (!expenseData.expenses.length) {
             await sendTextMessage({
               to: ownerWaId,
