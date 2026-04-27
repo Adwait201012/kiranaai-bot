@@ -24,6 +24,12 @@ Number rules:
 ALWAYS extract complete numbers: 100kg → quantity:100 unit:kg
 NEVER extract partial numbers
 
+Unit rules:
+
+Extract standard units if mentioned (packet, pkt, kg, gram, box, piece, liter)
+NEVER extract verbs as units. Words like 'aaya', 'aai', 'mila', 'diya', 'received' are VERBS, NOT units.
+If no clear unit is mentioned, set unit to null.
+
 Item vs person rule:
 
 Human names (Sharma, Ramesh, Mohan, Sunita) → customerName
