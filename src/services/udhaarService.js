@@ -256,7 +256,8 @@ async function getAllPendingUdhaar() {
 
 async function addInventoryStock({ itemName, quantity, unit }) {
   try {
-    // Step 1: Normalize via Groq so all variants of the same product merge
+    // Step 1: Normalize via Groq FIRST — before any DB operation
+    // Both "lays red packet chips" and "lal red packet chips lays" → "lays red"
     const normalizedItemName = await normalizeItemNameWithGroq(itemName) ||
       String(itemName || "").trim().toLowerCase();
 
@@ -265,9 +266,10 @@ async function addInventoryStock({ itemName, quantity, unit }) {
       normalizedUnit = "pieces";
     }
 
-    console.log(`[Inventory] ADD → normalized: "${normalizedItemName}", qty: ${quantity}, unit: ${normalizedUnit}`);
+    console.log(`[Inventory] ADD → raw: "${itemName}" → normalized: "${normalizedItemName}", qty: ${quantity}, unit: ${normalizedUnit}`);
 
-    // Step 2: Search Supabase using normalized name
+    // Step 2: Search Supabase using the normalized name (ilike for case-insensitive exact match)
+    // Since the DB always stores normalized names, this exact ilike will reliably match
     const { data: existing, error: findError } = await supabase
       .from("inventory")
       .select("id,item_name,quantity,unit,low_stock_threshold")
@@ -281,7 +283,7 @@ async function addInventoryStock({ itemName, quantity, unit }) {
     }
 
     if (existing?.id) {
-      // Step 3a: Found → UPDATE quantity
+      // Step 3a: Found → UPDATE quantity (item_name stays as the canonical normalized name)
       const nextQuantity = Number(existing.quantity || 0) + Number(quantity || 0);
       console.log(`[Inventory] MERGE → existing "${existing.item_name}" (id:${existing.id}), qty ${existing.quantity} + ${quantity} = ${nextQuantity}`);
 
@@ -302,13 +304,13 @@ async function addInventoryStock({ itemName, quantity, unit }) {
 
       return data;
     } else {
-      // Step 3b: Not found → INSERT with normalized name (never raw input)
-      console.log(`[Inventory] INSERT → "${normalizedItemName}" qty: ${quantity}`);
+      // Step 3b: Not found → INSERT with normalized name (NEVER raw user input)
+      console.log(`[Inventory] INSERT → new item "${normalizedItemName}" qty: ${quantity}`);
 
       const { data, error } = await supabase
         .from("inventory")
         .insert([{
-          item_name: normalizedItemName,
+          item_name: normalizedItemName,   // Always the short normalized name
           quantity: Number(quantity || 0),
           unit: normalizedUnit || "pieces",
           low_stock_threshold: DEFAULT_LOW_STOCK_THRESHOLD,
@@ -331,28 +333,14 @@ async function addInventoryStock({ itemName, quantity, unit }) {
 
 async function getInventoryStock({ itemName }) {
   try {
-    // Normalize via Groq so CHECK_STOCK also resolves variants to the canonical name
+    // Step 1: Normalize via Groq — same normalization as addInventoryStock
+    // ensures CHECK_STOCK resolves any variant to the canonical stored name
     const normalizedItemName = await normalizeItemNameWithGroq(itemName) ||
       String(itemName || "").trim().toLowerCase();
-    
-    // Try exact match first
-    const { data: exactData, error: exactError } = await supabase
-      .from("inventory")
-      .select("*")
-      .eq("item_name", normalizedItemName)
-      .limit(1)
-      .maybeSingle();
 
-    if (exactError) {
-      console.error('Supabase fetch failed:', exactError.message);
-      throw new Error('Database error. Try again!');
-    }
+    console.log(`[Inventory] CHECK → raw: "${itemName}" → normalized: "${normalizedItemName}"`);
 
-    if (exactData) {
-      return exactData;
-    }
-
-    // Try case-insensitive match
+    // Step 2: ilike exact match on normalized name (DB always stores normalized names)
     const { data: ilikeData, error: ilikeError } = await supabase
       .from("inventory")
       .select("*")
@@ -361,7 +349,7 @@ async function getInventoryStock({ itemName }) {
       .maybeSingle();
 
     if (ilikeError) {
-      console.error('Supabase fetch failed:', ilikeError.message);
+      console.error('Supabase fetch failed:', ilikeError.length);
       throw new Error('Database error. Try again!');
     }
 
@@ -369,7 +357,7 @@ async function getInventoryStock({ itemName }) {
       return ilikeData;
     }
 
-    // Try fuzzy match
+    // Fallback: partial fuzzy match (e.g. user says "lays" and DB has "lays red")
     const { data: fuzzyData, error: fuzzyError } = await supabase
       .from("inventory")
       .select("*")
