@@ -37,30 +37,54 @@ Pure English → english
 Mixed Hindi+English → hinglish
 Always return the detected language`;
 
-const ITEM_NORMALIZATION_MAP = {
-  'rice': 'chawal',
-  'wheat': 'aata',
-  'oil': 'tel',
-  'flour': 'aata',
-  'atta': 'aata',
-  'maggi': 'maggi',
-  'sugar': 'cheeni',
-  'salt': 'namak',
-  'tea': 'chai',
-  'coffee': 'coffee',
-  'milk': 'doodh',
-  'bread': 'bread',
-  'butter': 'makhan',
-  'ghee': 'ghee',
-  'soap': 'sabun',
-  'shampoo': 'shampoo',
-  'toothpaste': 'toothpaste'
-};
+const ITEM_NORMALIZATION_PROMPT = `Normalize this product name to a short standard form. Rules:
 
+Remove quantities, colors descriptions unless they differentiate the product
+Keep brand name if mentioned
+Keep flavor/variant if it differentiates (lays red vs lays green are different)
+Make lowercase
+Max 3-4 words
+Examples:
+'lays red packet chips' → 'lays red'
+'lal red packet chips lays' → 'lays red'
+'Maggi 2 minute noodles' → 'maggi noodles'
+'paracetamol 500mg strips' → 'paracetamol 500mg'
+'Dettol soap bar' → 'dettol soap'
+'Bisleri mineral water bottle' → 'bisleri water'
+'atta gehun ka 10kg' → 'aata'
+'basmati chawal premium' → 'basmati chawal'
+'Fevicol SH adhesive' → 'fevicol sh'
+Return ONLY the normalized name, nothing else.`;
+
+// Synchronous fallback (basic lowercase + trim) — used only when Groq is unavailable
 function normalizeItemName(itemName) {
   if (!itemName) return null;
-  const normalized = String(itemName).toLowerCase().trim();
-  return ITEM_NORMALIZATION_MAP[normalized] || normalized;
+  return String(itemName).toLowerCase().trim();
+}
+
+// Async Groq-powered normalization — USE THIS before any Supabase inventory operation
+async function normalizeItemNameWithGroq(itemName) {
+  if (!itemName) return null;
+  const rawName = String(itemName).trim();
+  try {
+    const completion = await client.chat.completions.create({
+      model: "llama-3.1-8b-instant",
+      temperature: 0,
+      messages: [
+        { role: "system", content: ITEM_NORMALIZATION_PROMPT },
+        { role: "user", content: rawName },
+      ],
+    });
+    const result = (completion.choices?.[0]?.message?.content || "").trim().toLowerCase();
+    // Safety: if result is empty or suspiciously long, fall back to basic normalize
+    if (!result || result.length > 60) {
+      return normalizeItemName(rawName);
+    }
+    return result;
+  } catch (err) {
+    console.error("normalizeItemNameWithGroq failed, using fallback:", err.message);
+    return normalizeItemName(rawName);
+  }
 }
 
 function normalizeCustomerName(customerName) {
@@ -152,6 +176,8 @@ async function detectIntent(messageText) {
   }
 
   // Normalize extracted data
+  // Note: itemName normalization via Groq is intentionally done in udhaarService
+  // right before the Supabase call so it applies to ALL inventory paths.
   return {
     intent: parsed.intent || "UNKNOWN",
     customerName: parsed.customerName ? normalizeCustomerName(parsed.customerName) : null,
@@ -168,6 +194,7 @@ async function detectIntent(messageText) {
 module.exports = {
   detectIntent,
   normalizeItemName,
+  normalizeItemNameWithGroq,
   normalizeCustomerName,
   detectLanguage
 };

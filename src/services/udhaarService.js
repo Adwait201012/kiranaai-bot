@@ -1,4 +1,5 @@
 const { supabase } = require("../config/supabase");
+const { normalizeItemNameWithGroq } = require("./aiExtractionService");
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 
 function normalizeCustomerName(customerName) {
@@ -255,7 +256,10 @@ async function getAllPendingUdhaar() {
 
 async function addInventoryStock({ itemName, quantity, unit }) {
   try {
-    const normalizedItemName = String(itemName || "").trim().toLowerCase();
+    // Normalize via Groq first so all variants of the same product merge
+    const normalizedItemName = await normalizeItemNameWithGroq(itemName) ||
+      String(itemName || "").trim().toLowerCase();
+
     let normalizedUnit = String(unit || "pieces").trim().toLowerCase();
     if (normalizedUnit === "null" || normalizedUnit === "") {
       normalizedUnit = "pieces";
@@ -321,7 +325,9 @@ async function addInventoryStock({ itemName, quantity, unit }) {
 
 async function getInventoryStock({ itemName }) {
   try {
-    const normalizedItemName = String(itemName || "").trim().toLowerCase();
+    // Normalize via Groq so CHECK_STOCK also resolves variants to the canonical name
+    const normalizedItemName = await normalizeItemNameWithGroq(itemName) ||
+      String(itemName || "").trim().toLowerCase();
     
     // Try exact match first
     const { data: exactData, error: exactError } = await supabase
