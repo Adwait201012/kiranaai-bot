@@ -77,7 +77,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Udhaar: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Baaki: ₹{total}",
     LOG_WAPAS: "✅ Payment!\n👤 {name}\n💵 Wapas: ₹{amount}\n📌 Baaki: ₹{remaining}",
-    TODAY_HISAAB: "📊 Aaj ka hisaab\n💸 Udhaar: ₹{newUdhaar}\n✅ Wapas: ₹{wapasReceived}\n📌 Net: ₹{net}",
+    TODAY_HISAAB: "📊 Aaj ka hisaab\n💸 Naya Udhaar: ₹{newUdhaar}\n✅ Wapas mila: ₹{wapasReceived}\n💰 Kharcha: ₹{totalExpenses}\n📌 Net Udhaar: ₹{netUdhaar}\n📌 Net Balance: ₹{netBalance}",
     SABKA_UDHAAR: "👥 Sabka udhaar:\n{list}\n💰 Total: ₹{total}",
     INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{unit}",
     CHECK_STOCK: "📦 {item}\n📊 Stock: {qty}{unit}",
@@ -106,7 +106,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Credit: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Pending: ₹{total}",
     LOG_WAPAS: "✅ Payment received!\n👤 {name}\n💵 Paid: ₹{amount}\n📌 Remaining: ₹{remaining}",
-    TODAY_HISAAB: "📊 Today's summary\n💸 Credit: ₹{newUdhaar}\n✅ Received: ₹{wapasReceived}\n📌 Net: ₹{net}",
+    TODAY_HISAAB: "📊 Today's summary\n💸 New Credit: ₹{newUdhaar}\n✅ Received: ₹{wapasReceived}\n💰 Expenses: ₹{totalExpenses}\n📌 Net Credit: ₹{netUdhaar}\n📌 Net Balance: ₹{netBalance}",
     SABKA_UDHAAR: "👥 All credit:\n{list}\n💰 Total: ₹{total}",
     INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{totalUnit}",
     CHECK_STOCK: "Stock: {qty}{unit}",
@@ -135,7 +135,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ हो गया!\n👤 {name}\n💸 उधार: ₹{amount}\n📌 कुल: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 बाकी: ₹{total}",
     LOG_WAPAS: "✅ पेमेंट प्राप्त!\n👤 {name}\n💵 वापस: ₹{amount}\n📌 बाकी: ₹{remaining}",
-    TODAY_HISAAB: "📊 आज का हिसाब\n💸 उधार: ₹{newUdhaar}\n✅ वापस मिला: ₹{wapasReceived}\n📌 नेट: ₹{net}",
+    TODAY_HISAAB: "📊 आज का हिसाब\n💸 नया उधार: ₹{newUdhaar}\n✅ वापस मिला: ₹{wapasReceived}\n💰 खर्चा: ₹{totalExpenses}\n📌 नेट उधार: ₹{netUdhaar}\n📌 नेट बैलेंस: ₹{netBalance}",
     SABKA_UDHAAR: "👥 सबका उधार:\n{list}\n💰 कुल: ₹{total}",
     INVENTORY_ADD: "📦 स्टॉक अपडेटेड!\n🏷️ {item}\n➕ जोड़ा: {qty}{unit}\n📊 कुल: {total}{unit}",
     CHECK_STOCK: "📦 {item}\n📊 स्टॉक: {qty}{unit}",
@@ -347,12 +347,15 @@ async function receiveWebhook(req, res) {
 
         case "TODAY_HISAAB":
           const today = await getTodayHisaab({ ownerPhone: ownerWaId });
+          const netBalance = today.wapasReceived - today.newUdhaar - today.totalExpenses;
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "TODAY_HISAAB", {
               newUdhaar: formatAmount(today.newUdhaar),
               wapasReceived: formatAmount(today.wapasReceived),
-              net: formatAmount(today.netUdhaar)
+              totalExpenses: formatAmount(today.totalExpenses),
+              netUdhaar: formatAmount(today.netUdhaar),
+              netBalance: formatAmount(netBalance)
             })
           });
           break;

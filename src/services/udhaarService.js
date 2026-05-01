@@ -105,28 +105,61 @@ async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
   }
 }
 
+// Helper: Get IST start and end of today as ISO strings (UTC)
+// IST is UTC+5:30.  We compute the IST date, then derive the
+// UTC timestamps that correspond to IST midnight–23:59:59.
+function getISTDayRange() {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +5:30 in ms
+  const nowUTC = Date.now();
+  const nowIST = new Date(nowUTC + IST_OFFSET_MS);
+
+  // IST date parts
+  const year = nowIST.getUTCFullYear();
+  const month = nowIST.getUTCMonth();
+  const day = nowIST.getUTCDate();
+
+  // IST midnight → subtract offset to get UTC
+  const startOfDayUTC = new Date(Date.UTC(year, month, day) - IST_OFFSET_MS);
+  // IST 23:59:59.999 → subtract offset to get UTC
+  const endOfDayUTC = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - IST_OFFSET_MS);
+
+  return {
+    startISO: startOfDayUTC.toISOString(),
+    endISO: endOfDayUTC.toISOString(),
+  };
+}
+
 async function getTodayHisaab({ ownerPhone }) {
   try {
-    const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
+    const { startISO, endISO } = getISTDayRange();
 
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const { data, error } = await supabase
+    // Fetch today's udhaar/wapas
+    const { data: udhaarData, error: udhaarError } = await supabase
       .from("udhaar_logs")
       .select("amount,created_at")
       .eq("owner_phone", ownerPhone)
-      .gte("created_at", startOfDay.toISOString())
-      .lte("created_at", endOfDay.toISOString());
+      .gte("created_at", startISO)
+      .lte("created_at", endISO);
 
-    if (error) {
-      console.error('Supabase fetch failed:', error.message);
+    if (udhaarError) {
+      console.error('Supabase fetch failed:', udhaarError.message);
       throw new Error('Database error. Try again!');
     }
 
-    const rows = data || [];
+    // Fetch today's expenses
+    const { data: expenseData, error: expenseError } = await supabase
+      .from("expenses")
+      .select("amount,created_at")
+      .eq("owner_phone", ownerPhone)
+      .gte("created_at", startISO)
+      .lte("created_at", endISO);
+
+    if (expenseError) {
+      console.error('Supabase fetch failed:', expenseError.message);
+      throw new Error('Database error. Try again!');
+    }
+
+    const rows = udhaarData || [];
     const newUdhaar = rows
       .filter((row) => Number(row.amount || 0) > 0)
       .reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -135,11 +168,15 @@ async function getTodayHisaab({ ownerPhone }) {
       .filter((row) => Number(row.amount || 0) < 0)
       .reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
 
+    const totalExpenses = (expenseData || [])
+      .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+
     const netUdhaar = newUdhaar - wapasReceived;
 
     return {
       newUdhaar,
       wapasReceived,
+      totalExpenses,
       netUdhaar,
     };
   } catch (error) {
@@ -475,19 +512,14 @@ async function logExpense({ category, amount, description, ownerPhone }) {
 
 async function getTodayExpenses({ ownerPhone }) {
   try {
-    const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
+    const { startISO, endISO } = getISTDayRange();
 
     const { data, error } = await supabase
       .from("expenses")
       .select("category,amount,description,created_at")
       .eq("owner_phone", ownerPhone)
-      .gte("created_at", startOfDay.toISOString())
-      .lte("created_at", endOfDay.toISOString())
+      .gte("created_at", startISO)
+      .lte("created_at", endISO)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -511,10 +543,16 @@ async function getTodayExpenses({ ownerPhone }) {
 
 async function getMonthlyExpenses({ ownerPhone }) {
   try {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    endOfMonth.setHours(23, 59, 59, 999);
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(Date.now() + IST_OFFSET_MS);
+    const year = nowIST.getUTCFullYear();
+    const month = nowIST.getUTCMonth();
+
+    // IST 1st of month midnight → UTC
+    const startOfMonth = new Date(Date.UTC(year, month, 1) - IST_OFFSET_MS);
+    // IST last day of month 23:59:59.999 → UTC
+    const lastDay = new Date(Date.UTC(year, month + 1, 0));
+    const endOfMonth = new Date(Date.UTC(year, month, lastDay.getUTCDate(), 23, 59, 59, 999) - IST_OFFSET_MS);
 
     const { data, error } = await supabase
       .from("expenses")
