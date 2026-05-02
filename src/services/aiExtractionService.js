@@ -107,9 +107,34 @@ async function normalizeItemNameWithGroq(itemName) {
   }
 }
 
+const HINDI_TRANSLITERATION_MAP = {
+  "शर्मा": "sharma",
+  "गुप्ता": "gupta",
+  "वर्मा": "varma",
+  "यादव": "yadav",
+  "सिंह": "singh",
+  "कुमार": "kumar",
+  "जोशी": "joshi",
+  "पटेल": "patel",
+  "अग्रवाल": "agarwal",
+  "तिवारी": "tiwari",
+  "चौधरी": "chaudhary",
+  "जी": "ji",
+  "भाई": "bhai",
+  "देवी": "devi",
+  "साहब": "sahab"
+};
+
 function normalizeCustomerName(customerName) {
   if (!customerName) return null;
-  return String(customerName)
+  
+  let name = String(customerName);
+  
+  Object.entries(HINDI_TRANSLITERATION_MAP).forEach(([hi, en]) => {
+    name = name.split(hi).join(en);
+  });
+
+  return name
     .toLowerCase()
     .replace(/\b(ji|bhai|ben|devi|sahab|sir|mr|mrs|ms)\b/gi, " ")
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
