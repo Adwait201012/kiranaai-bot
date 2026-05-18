@@ -689,7 +689,7 @@ async function receiveWebhook(req, res) {
 
         case "SABKA_UDHAAR":
           const result = await getAllPendingUdhaar({ ownerPhone: resolvedOwnerPhone });
-          if (!result.customers.length) {
+          if (!result.customers.length && (!result.overpaidCustomers || !result.overpaidCustomers.length)) {
             await sendTextMessage({
               to: ownerWaId,
               text: getTemplate(language, "SABKA_UDHAAR", {
@@ -698,9 +698,23 @@ async function receiveWebhook(req, res) {
               })
             });
           } else {
-            const list = result.customers
-              .map(item => `${displayName(item.customerName)}: ₹${formatAmount(item.total)}`)
-              .join("\n");
+            let list = "";
+            if (result.customers.length > 0) {
+              list = result.customers
+                .map(item => `${displayName(item.customerName)}: ₹${formatAmount(item.total)}`)
+                .join("\n");
+            }
+            
+            if (result.overpaidCustomers && result.overpaidCustomers.length > 0) {
+              const overpaidList = result.overpaidCustomers
+                .map(item => `✅ Saaf hisaab: ${displayName(item.customerName)} (₹${formatAmount(Math.abs(item.total))} zyada diya)`)
+                .join("\n");
+              if (list) list += "\n\n";
+              list += overpaidList;
+            }
+            
+            if (!list) list = "No pending udhaar ✅";
+
             await sendTextMessage({
               to: ownerWaId,
               text: getTemplate(language, "SABKA_UDHAAR", {

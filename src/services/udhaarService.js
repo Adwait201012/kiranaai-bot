@@ -457,7 +457,7 @@ async function getAllPendingUdhaar({ ownerPhone }) {
     
     for (const row of data || []) {
       const originalName = String(row.customer_name || "").trim();
-      if (!originalName) {
+      if (!originalName || originalName.length <= 2) {
         continue;
       }
       
@@ -474,17 +474,19 @@ async function getAllPendingUdhaar({ ownerPhone }) {
       }
     }
 
-    const customers = Array.from(totalsMap.entries())
+    const allCustomers = Array.from(totalsMap.entries())
       .map(([normalizedName, total]) => ({ 
         customerName: originalNameMap.get(normalizedName) || normalizedName, 
         total 
       }))
-      .filter((item) => item.total > 0)
-      .sort((a, b) => b.total - a.total);
+      .filter((item) => item.total !== 0);
+
+    const customers = allCustomers.filter(c => c.total > 0).sort((a, b) => b.total - a.total);
+    const overpaidCustomers = allCustomers.filter(c => c.total < 0).sort((a, b) => a.total - b.total);
 
     const grandTotal = customers.reduce((sum, item) => sum + item.total, 0);
 
-    return { customers, grandTotal };
+    return { customers, overpaidCustomers, grandTotal };
   } catch (error) {
     console.error('getAllPendingUdhaar error:', error.message);
     throw error;
