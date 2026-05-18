@@ -36,6 +36,15 @@ const {
   transcribeTwilioAudio,
 } = require("../services/audioTranscriptionService");
 const { isAlreadyProcessed, markAsProcessed } = require("../utils/idempotency");
+const {
+  formatUdhaarEntry,
+  formatLowStockAlert,
+  formatSalesReport,
+  formatContactSaved,
+  formatError,
+  formatAmount,
+  capitalizeName
+} = require("../utils/formatMessages");
 
 // In-memory map to track users who have requested data deletion and are pending confirmation.
 // Key: owner WhatsApp ID, Value: { timestamp: Date.now(), language: string }
@@ -64,12 +73,7 @@ const verifyWebhook = (req, res) => {
   res.status(200).send("Twilio webhook is active");
 };
 
-function formatAmount(value) {
-  const numberValue = Number(value || 0);
-  return Number.isInteger(numberValue)
-    ? String(numberValue)
-    : numberValue.toFixed(2);
-}
+
 
 function normalizeCustomerPhone(phone) {
   const raw = String(phone || "").trim();
@@ -201,6 +205,74 @@ const TEMPLATES = {
 };
 
 function getTemplate(language, key, params = {}) {
+  const isHinglishOrEnglish = !language || language === 'hinglish' || language === 'english';
+
+  if (isHinglishOrEnglish) {
+    switch (key) {
+      case "GREETING":
+        return `Namaste ji! 🙏 Mera naam **BharatBahi** hai — aapka pyara aur bharosemand WhatsApp assistant! 🏪\n\nAap apni dukan ka saare hisaab-kitab yahan aasaani se rakh sakte hain.\n\n✍️ *Bas likhiye aur main samajh jaunga:*\n• **'Sharma ji 500 udhaar'** (Udhaar jodne ke liye)\n• **'Sharma ji 200 wapas'** (Payment receive karne ke liye)\n• **'aaj ka hisaab'** (Daily summary report dekhne ke liye)\n• **'chawal 50kg aaya'** (Stock manage karne ke liye)\n\nJi, boliye main aapki kya madad kar sakta hoon? 😊`;
+
+      case "LOG_UDHAAR":
+        return formatUdhaarEntry(params.name, params.amount, "credit", params.total);
+
+      case "LOG_WAPAS":
+        return formatUdhaarEntry(params.name, params.amount, "debit", params.remaining);
+
+      case "CHECK_UDHAAR":
+        return `👤 **Grahak:** ${params.name}\n💰 **Pending Udhaar:** ₹**${params.total}**\n\nKripya yaad se clear karwa lijiye! 🙏`;
+
+      case "TODAY_HISAAB":
+        return formatSalesReport({
+          newUdhaar: params.newUdhaar,
+          wapasReceived: params.wapasReceived,
+          netPending: params.netPending,
+          totalExpenses: params.totalExpenses
+        });
+
+      case "SABKA_UDHAAR":
+        return `👥 **Sabka Udhaar (Pending List)** 👥\n\n${params.list}\n\n📊 **Grand Total Udhaar:** ₹**${params.total}**\n\nKripya sabhi ko time par remind karte rahein! 🙏`;
+
+      case "INVENTORY_ADD":
+        return `Done, ji! 📦 Stock update ho gaya hai!\n\n🏷️ **Item:** ${params.item}\n➕ **Added Qty:** **${params.qty}${params.unit}**\n📊 **Total Stock:** **${params.total}${params.unit}**\n\nAapka inventory updated hai! ✅`;
+
+      case "CHECK_STOCK":
+        return `📦 **Item Status** 📦\n\n🏷️ **Item:** ${params.item}\n📊 **Current Stock:** **${params.qty}${params.unit}**\n\nSab up-to-date hai! ✅`;
+
+      case "ALL_STOCK":
+        return `📋 **Inventory Stock List** 📋\n\n${params.list}\n\nSabhi items ka stock aasaani se track karein! 📦`;
+
+      case "LOW_STOCK":
+        return formatLowStockAlert(params.item, params.qty, params.unit);
+
+      case "SAVE_NUMBER":
+        return formatContactSaved(params.name, params.phone || "");
+
+      case "SEND_REMINDER":
+        return `📞 **Reminder Detail for ${capitalizeName(params.name)}** 📞\n\n👤 **Customer:** ${capitalizeName(params.name)}\n📱 **Phone:** **${params.phone}**\n💰 **Udhaar Total:** ₹**${params.total}**\n\n💬 *Aap yeh message copy karke WhatsApp par bhej sakte hain:*\n\n---\n"${params.shopName} se — Namaste ji! Aapka ₹**${params.total}** udhaar baaki hai. Kripya thoda time milne par de dena 🙏"\n---\n\nReminders se payment jaldi wapas aati hai! 😊`;
+
+      case "REMINDER_NOT_FOUND":
+        return `Maaf kijiye, ji! ❌\n\n👤 **${capitalizeName(params.name)}** ka phone number save nahi hai.\n\n👉 *Pehle number save karein:* **'${capitalizeName(params.name)} number 9876543210'**`;
+
+      case "LOG_EXPENSE":
+        return `Done, ji! ✅ Kharcha noted!\n\n💸 **Category/Samaan:** ${params.category}\n💰 **Kharcha Amount:** ₹**${params.amount}**\n📌 **Aaj Ka Total Kharcha:** ₹**${params.total}**\n\nSaare kharche time par note karne ke liye shabash! 📊`;
+
+      case "CHECK_EXPENSE":
+        return `💸 **Aaj Ka Kharcha Summary** 💸\n\n${params.list}\n\n📌 **Total Kharcha:** ₹**${params.total}**\n\nAapne aaj ke saare kharche note kar liye hain. ✅`;
+
+      case "RESET_CONFIRM":
+        return `⚠️ **DANGER ZONE / DATA DELETION** ⚠️\n\nMaaf kijiye dukan-dar bhai, kya aap sure hain? Aapka **SABKA DATA** permanently delete ho jayega.\n\n👉 Confirm karne ke liye type karke bhejein: **'HAAN DELETE KARO'**\n\n(Yeh action undo nahi ho sakta!)`;
+
+      case "RESET_DONE":
+        return `Reset ho gaya, ji! ✅ Aapka sabhi data permanently delete ho gaya hai. Fresh start ke liye main taiyar hoon! 🏪`;
+
+      case "RESET_CANCEL":
+        return `Done, ji! Deletion cancel kar diya gaya hai. Aapka saara data bilkul safe hai! ✅😊`;
+
+      case "UNKNOWN":
+        return `🤔 Samajh nahi aaya, ji! Kripya 'Hi' bhejein to main aapko sabhi features aur sahi format dikhaunga! 🙏`;
+    }
+  }
+
   const lang = TEMPLATES[language] || TEMPLATES.hinglish;
   let template = lang[key] || lang.UNKNOWN;
   
@@ -213,8 +285,14 @@ function getTemplate(language, key, params = {}) {
 }
 
 function getErrorTemplate(language, errorKey) {
+  const isHinglishOrEnglish = !language || language === 'hinglish' || language === 'english';
   const lang = TEMPLATES[language] || TEMPLATES.hinglish;
-  return lang.ERRORS[errorKey] || lang.ERRORS.NETWORK;
+  const rawMsg = lang.ERRORS[errorKey] || lang.ERRORS.NETWORK;
+
+  if (isHinglishOrEnglish) {
+    return formatError(rawMsg);
+  }
+  return rawMsg;
 }
 
 async function receiveWebhook(req, res) {
