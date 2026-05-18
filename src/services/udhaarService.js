@@ -278,7 +278,7 @@ async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
         return isCustomerMatch(normalizedRowName, normalizedSearchName);
       })
       .reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    return Math.abs(total);
+    return total;
   } catch (error) {
     console.error('getCustomerUdhaarTotal error:', error.message);
     throw error;

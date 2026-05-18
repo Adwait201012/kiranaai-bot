@@ -518,12 +518,13 @@ async function receiveWebhook(req, res) {
           if (customers.length === 0 && total < amount) {
             total = amount;
           }
+          const safeTotal = Math.max(0, total);
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_UDHAAR", {
               name: customerName,
               amount: formatAmount(amount),
-              total: formatAmount(total)
+              total: formatAmount(safeTotal)
             })
           });
           break;
@@ -559,11 +560,12 @@ async function receiveWebhook(req, res) {
           }
 
           const remainingTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
+          const safeTotal = Math.max(0, remainingTotal);
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "CHECK_UDHAAR", {
               name: customerName,
-              total: formatAmount(remainingTotal)
+              total: formatAmount(safeTotal)
             })
           });
           break;
@@ -600,15 +602,30 @@ async function receiveWebhook(req, res) {
 
           await logWapas({ customerName, amount, ownerPhone: resolvedOwnerPhone });
           const remaining = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          const safeRemaining = Math.max(0, remaining);
-          await sendTextMessage({
-            to: ownerWaId,
-            text: getTemplate(language, "LOG_WAPAS", {
-              name: customerName,
-              amount: formatAmount(amount),
-              remaining: formatAmount(safeRemaining)
-            })
-          });
+          
+          if (remaining <= 0) {
+            let saafMsg;
+            if (language === 'english') {
+              saafMsg = `✅ Payment received!\n👤 ${customerName}\n💵 Paid: ₹${formatAmount(amount)}\n\n${customerName} ka hisaab saaf hai ✅`;
+            } else if (language === 'hindi') {
+              saafMsg = `✅ पेमेंट प्राप्त!\n👤 ${customerName}\n💵 वापस: ₹${formatAmount(amount)}\n\n${customerName} का हिसाब साफ़ है ✅`;
+            } else {
+              saafMsg = `✅ Payment!\n👤 ${customerName}\n💵 Wapas: ₹${formatAmount(amount)}\n\n${customerName} ka hisaab saaf hai ✅`;
+            }
+            await sendTextMessage({
+              to: ownerWaId,
+              text: saafMsg
+            });
+          } else {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getTemplate(language, "LOG_WAPAS", {
+                name: customerName,
+                amount: formatAmount(amount),
+                remaining: formatAmount(remaining)
+              })
+            });
+          }
           break;
         }
 
@@ -843,6 +860,7 @@ async function receiveWebhook(req, res) {
             return;
           }
           const reminderTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
+          const safeReminderTotal = Math.max(0, reminderTotal);
           const shopInfo = await getShopDetails(resolvedOwnerPhone);
           const shopName = shopInfo?.shop_name || "BharatBahi shop";
           
@@ -851,7 +869,7 @@ async function receiveWebhook(req, res) {
             text: getTemplate(language, "SEND_REMINDER", {
               name: customerName,
               phone: customerPhone,
-              total: formatAmount(reminderTotal),
+              total: formatAmount(safeReminderTotal),
               shopName: shopName
             })
           });

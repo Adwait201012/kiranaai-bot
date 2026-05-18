@@ -14,7 +14,7 @@ Message says is mahine ka hisaab/monthly hisaab/is mahine kitna udhaar/mahine ka
 Message says chawal 5kg gaya/tel 2 litre bika/stock gaya/chawal 5 sell hua/nikala with item, quantity, unit → STOCK_OUT (extract itemName, quantity, unit)
 Message has person name + amount + udhaar/baaki/credit → LOG_UDHAAR
 Message has person name + kitna udhaar/baaki kitna → CHECK_UDHAAR
-Message has person name + amount + wapas/diya/paid → LOG_WAPAS
+Message has person name + amount + wapas/diya/paid/return/returned/payment/de diya/de diya usne/mil gaya/received/paid back/clear/cleared → LOG_WAPAS (NOTE: Words like return, returned, paid, payment, de diya, de diya usne, mil gaya, received, paid back, clear, cleared always imply repayment/payment received and MUST trigger LOG_WAPAS, never LOG_UDHAAR)
 Message has ANY item/product + aaya/aai/mila/received/bought/order → INVENTORY_ADD
 Message has item + kitna hai/stock kitna/remaining → CHECK_STOCK
 Message says sabka stock/all stock/inventory dikhao → ALL_STOCK
