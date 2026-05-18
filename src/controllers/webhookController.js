@@ -97,6 +97,13 @@ function formatUnit(quantity, unit, language) {
   return ` ${u}`;
 }
 
+function displayName(name) {
+  const honorifics = ['ji', 'bhai', 'sahab', 'sir'];
+  const lastName = String(name || '').trim().split(' ').pop().toLowerCase();
+  if (honorifics.includes(lastName)) return name;
+  return name + ' ji';
+}
+
 // Hardcoded reply templates based on language
 const TEMPLATES = {
   hinglish: {
@@ -453,8 +460,12 @@ async function receiveWebhook(req, res) {
 
           const customers = await searchCustomersByName({ customerName, ownerPhone: resolvedOwnerPhone });
           if (customers.length === 0) {
-            const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
-            customerName = newCust.customer_name;
+            const display = displayName(customerName);
+            await sendTextMessage({
+              to: ownerWaId,
+              text: `${display} ka koi record nahi mila 🔍\nPehle udhaar log karo: '${customerName} 500 udhaar'`
+            });
+            return;
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
@@ -472,13 +483,14 @@ async function receiveWebhook(req, res) {
           }
 
           const balResult = await getCustomerBalance({ customerName, ownerPhone: resolvedOwnerPhone });
+          const display = displayName(balResult.displayName);
           let balReply;
           if (!balResult.found) {
-            balReply = `${balResult.displayName} ji ka koi record nahi mila 🔍`;
+            balReply = `${display} ka koi record nahi mila 🔍\nPehle udhaar log karo: '${balResult.displayName} 500 udhaar'`;
           } else if (balResult.balance <= 0) {
-            balReply = `${balResult.displayName} ji ka hisaab saaf hai ✅`;
+            balReply = `${display} ka hisaab saaf hai ✅`;
           } else {
-            balReply = `${balResult.displayName} ji ka baaki: ₹${formatAmount(balResult.balance)} 💰`;
+            balReply = `${display} ka baaki: ₹${formatAmount(balResult.balance)} 💰`;
           }
           await sendTextMessage({ to: ownerWaId, text: balReply });
           break;
@@ -522,7 +534,7 @@ async function receiveWebhook(req, res) {
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_UDHAAR", {
-              name: customerName,
+              name: displayName(customerName),
               amount: formatAmount(amount),
               total: formatAmount(safeTotal)
             })
@@ -541,8 +553,12 @@ async function receiveWebhook(req, res) {
 
           const customers = await searchCustomersByName({ customerName, ownerPhone: resolvedOwnerPhone });
           if (customers.length === 0) {
-            const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
-            customerName = newCust.customer_name;
+            const display = displayName(customerName);
+            await sendTextMessage({
+              to: ownerWaId,
+              text: `${display} ka koi record nahi mila 🔍\nPehle udhaar log karo: '${customerName} 500 udhaar'`
+            });
+            return;
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
@@ -560,14 +576,20 @@ async function receiveWebhook(req, res) {
           }
 
           const remainingTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          const safeTotal = Math.max(0, remainingTotal);
-          await sendTextMessage({
-            to: ownerWaId,
-            text: getTemplate(language, "CHECK_UDHAAR", {
-              name: customerName,
-              total: formatAmount(safeTotal)
-            })
-          });
+          if (remainingTotal <= 0) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: `${displayName(customerName)} ka hisaab saaf hai ✅`
+            });
+          } else {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getTemplate(language, "CHECK_UDHAAR", {
+                name: displayName(customerName),
+                total: formatAmount(remainingTotal)
+              })
+            });
+          }
           break;
         }
 
@@ -605,12 +627,13 @@ async function receiveWebhook(req, res) {
           
           if (remaining <= 0) {
             let saafMsg;
+            const display = displayName(customerName);
             if (language === 'english') {
-              saafMsg = `✅ Payment received!\n👤 ${customerName}\n💵 Paid: ₹${formatAmount(amount)}\n\n${customerName} ka hisaab saaf hai ✅`;
+              saafMsg = `✅ Payment received!\n👤 ${display}\n💵 Paid: ₹${formatAmount(amount)}\n\n${display} ka hisaab saaf hai ✅`;
             } else if (language === 'hindi') {
-              saafMsg = `✅ पेमेंट प्राप्त!\n👤 ${customerName}\n💵 वापस: ₹${formatAmount(amount)}\n\n${customerName} का हिसाब साफ़ है ✅`;
+              saafMsg = `✅ पेमेंट प्राप्त!\n👤 ${display}\n💵 वापस: ₹${formatAmount(amount)}\n\n${display} का हिसाब साफ़ है ✅`;
             } else {
-              saafMsg = `✅ Payment!\n👤 ${customerName}\n💵 Wapas: ₹${formatAmount(amount)}\n\n${customerName} ka hisaab saaf hai ✅`;
+              saafMsg = `✅ Payment!\n👤 ${display}\n💵 Wapas: ₹${formatAmount(amount)}\n\n${display} ka hisaab saaf hai ✅`;
             }
             await sendTextMessage({
               to: ownerWaId,
@@ -620,7 +643,7 @@ async function receiveWebhook(req, res) {
             await sendTextMessage({
               to: ownerWaId,
               text: getTemplate(language, "LOG_WAPAS", {
-                name: customerName,
+                name: displayName(customerName),
                 amount: formatAmount(amount),
                 remaining: formatAmount(remaining)
               })
@@ -676,7 +699,7 @@ async function receiveWebhook(req, res) {
             });
           } else {
             const list = result.customers
-              .map(item => `${item.customerName}: ₹${formatAmount(item.total)}`)
+              .map(item => `${displayName(item.customerName)}: ₹${formatAmount(item.total)}`)
               .join("\n");
             await sendTextMessage({
               to: ownerWaId,
