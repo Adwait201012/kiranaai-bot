@@ -148,6 +148,9 @@ if (require.main === module) {
     "Gupta sahab 2k udhaar",
     "Ramesh ko 250 ka samaan diya",
     "payment received from Mohan 400",
+    // New cases from requirements:
+    "Sita ne 300 liye",
+    "1000 ka saman Radhika ke naam",
   ];
 
   console.log("┌─────────────────────────────────────────────────────────────┐");
