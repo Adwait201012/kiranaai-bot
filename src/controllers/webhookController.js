@@ -35,6 +35,7 @@ const {
   isAudioMedia,
   transcribeTwilioAudio,
 } = require("../services/audioTranscriptionService");
+const { isAlreadyProcessed, markAsProcessed } = require("../utils/idempotency");
 
 // In-memory map to track users who have requested data deletion and are pending confirmation.
 // Key: owner WhatsApp ID, Value: { timestamp: Date.now(), language: string }
@@ -225,6 +226,14 @@ async function receiveWebhook(req, res) {
     const incomingText = String(req.body?.Body || "").trim();
     const mediaContentType = req.body?.MediaContentType0;
     const mediaUrl = req.body?.MediaUrl0;
+    // WhatsApp message ID for idempotency (Twilio wraps this in SmsMessageSid / MessageSid)
+    const messageId = req.body?.MessageSid || req.body?.SmsMessageSid || null;
+
+    // ── IDEMPOTENCY CHECK ─────────────────────────────────────────
+    if (messageId && await isAlreadyProcessed(messageId)) {
+      console.log(`[Idempotency] Duplicate message ${messageId} — skipping`);
+      return;
+    }
 
     let text = incomingText;
 
@@ -258,6 +267,9 @@ async function receiveWebhook(req, res) {
     }
 
     const resolvedOwnerPhone = await resolveOwnerPhone(ownerWaId);
+
+    // Mark message as processed now that we've validated it has content
+    if (messageId) await markAsProcessed(messageId, ownerWaId);
 
     // ── REGISTRATION GATE ─────────────────────────────────────────
     // Step A: If user is mid-registration (we asked for shop name), treat
