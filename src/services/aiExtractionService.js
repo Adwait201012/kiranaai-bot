@@ -9,7 +9,7 @@ Intent rules:
 
 Message says Raju ko add karo/employee add karo/helper add karo with name and phone number → ADD_EMPLOYEE (extract employeeName and employeePhone)
 Message has person name + kitna baaki/ka hisaab/kitna dena hai/udhaar check/baaki batao/baaki hai → CHECK_SINGLE_CUSTOMER_BALANCE (extract customerName only)
-Message says last entry dikhao/last entry/pichli entry/abhi kya likha/last transaction/kya likha abhi/recent entries/pichle transactions → LAST_ENTRIES
+Message says last entry dikhao/last entry/pichli entry/abhi kya likha/last transaction/kya likha abhi/recent entries/pichle transactions → LAST_ENTRIES (extract customerName if provided)
 Message says is mahine ka hisaab/monthly hisaab/is mahine kitna udhaar/mahine ka report/monthly report/is month ka hisaab/poore mahine ka → MONTHLY_SUMMARY
 Message says chawal 5kg gaya/tel 2 litre bika/stock gaya/chawal 5 sell hua/nikala with item, quantity, unit → STOCK_OUT (extract itemName, quantity, unit)
 Message has person name + amount + udhaar/baaki/credit → LOG_UDHAAR

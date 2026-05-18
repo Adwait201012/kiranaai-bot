@@ -1,5 +1,6 @@
 const { supabase } = require("../config/supabase");
 const { normalizeItemNameWithGroq } = require("./aiExtractionService");
+const { distance } = require("fastest-levenshtein");
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 
 // Words that Groq sometimes incorrectly extracts as a unit — always invalid
@@ -52,16 +53,42 @@ function normalizeCustomerName(customerName) {
   
   let name = String(customerName);
   
+  // Rule 1: Handle Hindi transliteration first
   Object.entries(HINDI_TRANSLITERATION_MAP).forEach(([hi, en]) => {
     name = name.split(hi).join(en);
   });
 
   return name
     .toLowerCase()
-    .replace(/\b(ji|bhai|ben|devi|sahab|sir|mr|mrs|ms|shree)\b/gi, " ")
+    // Rule 1: Remove honorifics (added 'g' as requested)
+    .replace(/\b(ji|bhai|ben|behen|didi|sahab|sir|mr|mrs|ms|shree|g)\b/gi, " ")
+    // Rule 1: Remove extra symbols but keep letters/numbers
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    // Rule 1: Remove extra spaces and trim
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Helper to determine if two normalized names match based on fuzzy rules.
+ * Handles exact matches, partial matches, and Levenshtein distance (max 2).
+ */
+function isCustomerMatch(normalizedRow, normalizedSearch) {
+  if (!normalizedRow || !normalizedSearch) return false;
+  if (normalizedRow === normalizedSearch) return true;
+  
+  // Single letter or 2-letter names should NEVER fuzzy match to a different name.
+  if (normalizedSearch.length <= 2 || normalizedRow.length <= 2) {
+    return false;
+  }
+  
+  // Rule 5: Levenshtein distance <= 2
+  if (distance(normalizedRow, normalizedSearch) <= 2) return true;
+  
+  // Rule 3 & 4: Partial/Short name matching (includes)
+  if (normalizedRow.includes(normalizedSearch) || normalizedSearch.includes(normalizedRow)) return true;
+  
+  return false;
 }
 
 
@@ -107,6 +134,25 @@ async function isShopRegistered(ownerPhone) {
   } catch (error) {
     console.error('isShopRegistered error:', error.message);
     return false;
+  }
+}
+
+async function getShopDetails(ownerPhone) {
+  try {
+    const { data, error } = await supabase
+      .from("registered_shops")
+      .select("shop_name")
+      .eq("owner_phone", ownerPhone)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Supabase fetch failed for getShopDetails:', error.message);
+      return null;
+    }
+    return data;
+  } catch (error) {
+    console.error('getShopDetails error:', error.message);
+    return null;
   }
 }
 
@@ -229,12 +275,10 @@ async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
     const total = (data || [])
       .filter((row) => {
         const normalizedRowName = normalizeCustomerName(row.customer_name);
-        return normalizedRowName === normalizedSearchName || 
-               normalizedRowName.includes(normalizedSearchName) || 
-               normalizedSearchName.includes(normalizedRowName);
+        return isCustomerMatch(normalizedRowName, normalizedSearchName);
       })
       .reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    return total;
+    return Math.abs(total);
   } catch (error) {
     console.error('getCustomerUdhaarTotal error:', error.message);
     throw error;
@@ -336,9 +380,7 @@ async function saveCustomerPhone({ customerName, phone, ownerPhone }) {
 
     const existing = (existingRows || []).find((row) => {
       const normalizedRowName = normalizeCustomerName(row.customer_name);
-      return normalizedRowName === normalizedSearchName || 
-             normalizedRowName.includes(normalizedSearchName) || 
-             normalizedSearchName.includes(normalizedRowName);
+      return isCustomerMatch(normalizedRowName, normalizedSearchName);
     });
     
     if (existing?.id) {
@@ -388,9 +430,7 @@ async function getCustomerPhone({ customerName, ownerPhone }) {
 
     const matched = (data || []).find((row) => {
       const normalizedRowName = normalizeCustomerName(row.customer_name);
-      return normalizedRowName === normalizedSearchName || 
-             normalizedRowName.includes(normalizedSearchName) || 
-             normalizedSearchName.includes(normalizedRowName);
+      return isCustomerMatch(normalizedRowName, normalizedSearchName);
     });
     return matched?.phone_number || null;
   } catch (error) {
@@ -836,11 +876,7 @@ async function getCustomerBalance({ customerName, ownerPhone }) {
 
     const rows = (data || []).filter((row) => {
       const normalizedRow = normalizeCustomerName(row.customer_name);
-      return (
-        normalizedRow === normalizedSearch ||
-        normalizedRow.includes(normalizedSearch) ||
-        normalizedSearch.includes(normalizedRow)
-      );
+      return isCustomerMatch(normalizedRow, normalizedSearch);
     });
 
     if (!rows.length) {
@@ -858,21 +894,36 @@ async function getCustomerBalance({ customerName, ownerPhone }) {
   }
 }
 
-async function getLastEntries({ ownerPhone, limit = 3 }) {
+async function getLastEntries({ ownerPhone, limit = 3, customerName = null }) {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from("udhaar_logs")
       .select("customer_name,amount,created_at")
       .eq("owner_phone", ownerPhone)
-      .order("created_at", { ascending: false })
-      .limit(limit);
+      .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error('Supabase fetch failed in getLastEntries:', error.message);
-      throw new Error('Database error. Try again!');
+    if (customerName) {
+      // If customerName provided, fetch more to allow for fuzzy filtering locally
+      const { data, error } = await query.limit(50);
+      if (error) {
+        console.error('Supabase fetch failed in getLastEntries:', error.message);
+        throw new Error('Database error. Try again!');
+      }
+
+      const normalizedSearch = normalizeCustomerName(customerName);
+      const filtered = (data || []).filter(entry => {
+        const normalizedEntry = normalizeCustomerName(entry.customer_name);
+        return isCustomerMatch(normalizedEntry, normalizedSearch);
+      });
+      return filtered.slice(0, limit);
+    } else {
+      const { data, error } = await query.limit(limit);
+      if (error) {
+        console.error('Supabase fetch failed in getLastEntries:', error.message);
+        throw new Error('Database error. Try again!');
+      }
+      return data || [];
     }
-
-    return data || [];
   } catch (error) {
     console.error('getLastEntries error:', error.message);
     throw error;
@@ -895,11 +946,7 @@ async function searchCustomersByName({ customerName, ownerPhone }) {
 
     const matched = (data || []).filter((row) => {
       const normalizedRow = normalizeCustomerName(row.customer_name);
-      return (
-        normalizedRow === normalizedSearch ||
-        normalizedRow.includes(normalizedSearch) ||
-        normalizedSearch.includes(normalizedRow)
-      );
+      return isCustomerMatch(normalizedRow, normalizedSearch);
     });
 
     return matched;
@@ -987,6 +1034,7 @@ module.exports = {
   resolveOwnerPhone,
   addEmployee,
   isShopRegistered,
+  getShopDetails,
   registerShop,
   searchCustomersByName,
   createCustomer,

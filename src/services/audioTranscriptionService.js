@@ -42,15 +42,50 @@ async function transcribeTwilioAudio({ mediaUrl, mediaContentType }) {
     const transcription = await client.audio.transcriptions.create({
       file: fs.createReadStream(tempFilePath),
       model: "whisper-large-v3-turbo",
-      prompt: "Transcribe in Hindi or English. If Hindi, use Devanagari script. Do not use Urdu.",
+      prompt: "This is an Indian shopkeeper speaking in Hindi, Hinglish, or English. Common words: udhaar, wapas, hisaab, chawal, tel, daal, aata, sharma, verma, pintu, raju. Numbers are amounts in rupees. Speech may be fast, informal, with Indori accent. Transcribe exactly.",
     });
 
-    return String(transcription.text || "").trim();
+    const rawText = String(transcription.text || "").trim();
+    return cleanTranscription(rawText);
   } finally {
     if (fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);
     }
   }
+}
+
+function cleanTranscription(text) {
+  if (!text) return "";
+
+  let cleaned = text.toLowerCase();
+
+  // Common transcription errors for Indian business terms
+  const replacements = {
+    "ou dhaar": "udhaar",
+    "u daar": "udhaar",
+    "udaar": "udhaar",
+    "his aab": "hisaab",
+    "hishab": "hisaab",
+    "hisab": "hisaab",
+    "khar cha": "kharcha",
+    "kharch": "kharcha",
+    "wapas": "wapas",
+    "vapas": "wapas",
+    "waapas": "wapas",
+  };
+
+  for (const [wrong, right] of Object.entries(replacements)) {
+    cleaned = cleaned.split(wrong).join(right);
+  }
+
+  // Remove filler words
+  cleaned = cleaned.replace(/\b(um|uh|err|aaa|ah|oh)\b/gi, "");
+  
+  // Clean up punctuation and multiple spaces
+  cleaned = cleaned.replace(/[.,!?;:]/g, " ");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+  return cleaned;
 }
 
 module.exports = {

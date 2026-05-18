@@ -24,6 +24,7 @@ const {
   resolveOwnerPhone,
   addEmployee,
   isShopRegistered,
+  getShopDetails,
   registerShop,
   searchCustomersByName,
   createCustomer,
@@ -110,7 +111,8 @@ const TEMPLATES = {
     ALL_STOCK: "📋 Sabka stock:\n{list}",
     LOW_STOCK: "⚠️ Low stock!\n🏷️ {item}: sirf {qty}{unit} bacha!",
     SAVE_NUMBER: "✅ {name} ka number save!",
-    SEND_REMINDER: "✅ {name} ko reminder bhej diya!\n💰 Udhaar: ₹{total}",
+    SEND_REMINDER: "📞 {name} ko call karo ya WhatsApp karo:\n{phone}\n\nUnka baaki: ₹{total}\nMessage bhej sakte ho:\n'{shopName} se — aapka ₹{total} udhaar baaki hai. Thoda time milne par de dena 🙏'",
+    REMINDER_NOT_FOUND: "{name} ka number save nahi hai.\nPehle save karo: '{name} number 9876543210'",
     LOG_EXPENSE: "✅ Kharcha noted!\n💸 {category}: ₹{amount}\n📌 Aaj ka total kharcha: ₹{total}",
     CHECK_EXPENSE: "💸 Kharcha summary:\n{list}\n📌 Total: ₹{total}",
     RESET_CONFIRM: "⚠️ Kya aap sure hain? Aapka SABKA data delete ho jayega.\nConfirm karne ke liye 'HAAN DELETE KARO' bhejo",
@@ -154,6 +156,7 @@ const TEMPLATES = {
       ITEM_REQUIRED: "Item name required!",
       QUANTITY_REQUIRED: "Quantity required!",
       PHONE_REQUIRED: "Phone number required!",
+      AUDIO_UNCLEAR: "Awaaz saaf nahi aayi, dobara bhejo 🎤",
     }
   },
   hindi: {
@@ -168,7 +171,8 @@ const TEMPLATES = {
     ALL_STOCK: "📋 सबका स्टॉक:\n{list}",
     LOW_STOCK: "⚠️ कम स्टॉक!\n🏷️ {item}: सिर्फ {qty}{unit} बचा है!",
     SAVE_NUMBER: "✅ {name} का नंबर सेव!",
-    SEND_REMINDER: "✅ {name} को रिमाइंडर भेज दिया!\n💰 उधार: ₹{total}",
+    SEND_REMINDER: "📞 {name} को कॉल या WhatsApp करें:\n{phone}\n\nउनका बाकी: ₹{total}\nमैसेज भेज सकते हैं:\n'{shopName} से — आपका ₹{total} उधार बाकी है। थोड़ा टाइम मिलने पर दे देना 🙏'",
+    REMINDER_NOT_FOUND: "{name} का नंबर सेव नहीं है।\nपहले सेव करें: '{name} number 9876543210'",
     LOG_EXPENSE: "✅ खर्चा नोट किया!\n💸 {category}: ₹{amount}\n📌 आज का कुल खर्चा: ₹{total}",
     CHECK_EXPENSE: "💸 खर्चा सारांश:\n{list}\n📌 कुल: ₹{total}",
     RESET_CONFIRM: "⚠️ क्या आप पक्के हैं? आपका सारा डेटा डिलीट हो जाएगा।\nConfirm करने के लिए 'HAAN DELETE KARO' भेजें",
@@ -183,6 +187,7 @@ const TEMPLATES = {
       ITEM_REQUIRED: "आइटम नाम आवश्यक!",
       QUANTITY_REQUIRED: "मात्रा आवश्यक!",
       PHONE_REQUIRED: "फोन नंबर आवश्यक!",
+      AUDIO_UNCLEAR: "आवाज़ साफ़ नहीं आयी, दोबारा भेजें 🎤",
     }
   }
 };
@@ -224,6 +229,13 @@ async function receiveWebhook(req, res) {
           mediaContentType,
         });
         text = transcribedText;
+        if (!text || text.length < 2) {
+          await sendTextMessage({
+            to: ownerWaId,
+            text: getErrorTemplate(language || 'hinglish', 'AUDIO_UNCLEAR')
+          });
+          return;
+        }
       } catch (error) {
         console.error('Audio transcription failed:', error.message);
         await sendTextMessage({
@@ -502,7 +514,10 @@ async function receiveWebhook(req, res) {
           }
 
           await logUdhaar({ customerName, amount, ownerPhone: resolvedOwnerPhone });
-          const total = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
+          let total = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
+          if (customers.length === 0 && total < amount) {
+            total = amount;
+          }
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_UDHAAR", {
@@ -514,7 +529,7 @@ async function receiveWebhook(req, res) {
           break;
         }
 
-        case "CHECK_UDHAAR":
+        case "CHECK_UDHAAR": {
           if (!customerName) {
             await sendTextMessage({
               to: ownerWaId,
@@ -522,6 +537,27 @@ async function receiveWebhook(req, res) {
             });
             return;
           }
+
+          const customers = await searchCustomersByName({ customerName, ownerPhone: resolvedOwnerPhone });
+          if (customers.length === 0) {
+            const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
+            customerName = newCust.customer_name;
+          } else if (customers.length === 1) {
+            customerName = customers[0].customer_name;
+          } else {
+            pendingDisambiguation.set(ownerWaId, {
+              timestamp: Date.now(),
+              options: customers,
+              pendingAction: aiResult
+            });
+            const optionsText = customers.map((c, i) => `${i + 1}. ${c.customer_name}`).join("\n");
+            await sendTextMessage({
+              to: ownerWaId,
+              text: `Kaun sa ${customerName} — \n${optionsText}\n(number bhejo)`
+            });
+            break;
+          }
+
           const remainingTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
           await sendTextMessage({
             to: ownerWaId,
@@ -531,6 +567,7 @@ async function receiveWebhook(req, res) {
             })
           });
           break;
+        }
 
         case "LOG_WAPAS": {
           if (!customerName || !amount || amount <= 0) {
@@ -789,7 +826,7 @@ async function receiveWebhook(req, res) {
           });
           break;
 
-        case "SEND_REMINDER":
+        case "SEND_REMINDER": {
           if (!customerName) {
             await sendTextMessage({
               to: ownerWaId,
@@ -801,24 +838,25 @@ async function receiveWebhook(req, res) {
           if (!customerPhone) {
             await sendTextMessage({
               to: ownerWaId,
-              text: getErrorTemplate(language, 'PHONE_REQUIRED')
+              text: getTemplate(language, "REMINDER_NOT_FOUND", { name: customerName })
             });
             return;
           }
           const reminderTotal = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          const reminderText = getTemplate(language, "REMINDER_CUSTOMER", {
-            customerName,
-            amount: formatAmount(reminderTotal)
-          });
-          await sendTextMessage({ to: customerPhone, text: reminderText });
+          const shopInfo = await getShopDetails(resolvedOwnerPhone);
+          const shopName = shopInfo?.shop_name || "BharatBahi shop";
+          
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "SEND_REMINDER", {
               name: customerName,
-              total: formatAmount(reminderTotal)
+              phone: customerPhone,
+              total: formatAmount(reminderTotal),
+              shopName: shopName
             })
           });
           break;
+        }
 
         case "LOG_EXPENSE":
           if (!amount || amount <= 0) {
@@ -882,7 +920,7 @@ async function receiveWebhook(req, res) {
           break;
 
         case "LAST_ENTRIES": {
-          const entries = await getLastEntries({ ownerPhone: resolvedOwnerPhone, limit: 3 });
+          const entries = await getLastEntries({ ownerPhone: resolvedOwnerPhone, limit: 3, customerName });
           if (!entries.length) {
             await sendTextMessage({ to: ownerWaId, text: "Abhi tak koi entry nahi hai 📋" });
             break;
