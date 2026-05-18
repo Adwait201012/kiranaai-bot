@@ -870,26 +870,57 @@ async function receiveWebhook(req, res) {
           }
           break;
 
-        case "SAVE_NUMBER":
-          if (!customerName || !phoneNumber) {
+        case "SAVE_NUMBER": {
+          // ── Validate name ──────────────────────────────────────────────
+          if (!customerName) {
             await sendTextMessage({
               to: ownerWaId,
-              text: getErrorTemplate(language, 'PHONE_REQUIRED')
+              text: "❌ Customer ka naam nahi mila.\nExample: 'Rahul ka number save karo 9876543210'"
             });
-            return;
+            break;
           }
-          await saveCustomerPhone({
-            customerName,
-            phone: normalizeCustomerPhone(phoneNumber),
-            ownerPhone: resolvedOwnerPhone
-          });
-          await sendTextMessage({
-            to: ownerWaId,
-            text: getTemplate(language, "SAVE_NUMBER", {
-              name: customerName
-            })
-          });
+
+          // ── Validate phone: exactly 10 digits, starting with 6-9 ──────
+          const rawPhone = String(phoneNumber || "").replace(/\D/g, "");
+          if (!rawPhone || rawPhone.length !== 10 || !/^[6-9]/.test(rawPhone)) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: `❌ Phone number galat hai.\n${rawPhone ? `"${rawPhone}" valid Indian number nahi hai.` : "Number nahi mila."}\nSahi format: 'Rahul ka number save karo 9876543210'`
+            });
+            break;
+          }
+
+          const e164Phone = `+91${rawPhone}`;
+
+          // ── Save (isolated try/catch → exactly ONE response always) ────
+          try {
+            await saveCustomerPhone({
+              customerName,
+              phone: e164Phone,
+              ownerPhone: resolvedOwnerPhone
+            });
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getTemplate(language, "SAVE_NUMBER", { name: displayName(customerName) })
+            });
+          } catch (saveErr) {
+            console.error('[SAVE_NUMBER] saveCustomerPhone failed:', saveErr.message);
+            const msg = String(saveErr.message || "");
+            if (msg.includes("23505") || msg.includes("duplicate") || msg.includes("unique")) {
+              await sendTextMessage({
+                to: ownerWaId,
+                text: `⚠️ ${displayName(customerName)} ka number (${e164Phone}) pehle se save hai.`
+              });
+            } else {
+              await sendTextMessage({
+                to: ownerWaId,
+                text: `❌ Number save nahi ho paya. Thodi der baad try karo.\n(${msg || 'Database error'})`
+              });
+            }
+          }
           break;
+        }
+
 
         case "SEND_REMINDER": {
           if (!customerName) {

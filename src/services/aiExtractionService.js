@@ -23,6 +23,8 @@ Message says sabka udhaar/all credit/baaki list → SABKA_UDHAAR
 Message has expense keywords like bill/rent/salary/kharcha/bijli/paid for expense → LOG_EXPENSE
 Message says sab delete karo/clear my data/reset karo/sabka data delete karo/mera data delete/delete everything/sab kuch hatao/reset my account/data saaf karo/sab mitao → RESET_DATA
 Message says hi/hii/hiii/hey/hello/helo/hlo/namaste/namasthe/nmste/ram ram/jai shree krishna/jai jinendra/haan/han/ha/help/halp/kya hai/kya karta hai/kya ho/start/shuru/chalu/good morning/good evening/gm/ge → GREETING
+Message has person name + number/phone + save karo/number save/number store/contact save/save number/mobile save/no. save → SAVE_NUMBER (extract customerName and phoneNumber. phoneNumber must be the 10-digit number)
+Message has person name + remind karo/reminder/call karo/WhatsApp karo/remind/contact karo → SEND_REMINDER (extract customerName)
 Anything else → UNKNOWN
 
 Number rules:
