@@ -30,12 +30,17 @@ const {
   createCustomer,
   deductInventoryStock,
 } = require("../services/udhaarService");
-const { sendTextMessage } = require("../services/whatsappService");
+const { sendTextMessage: whatsappSend } = require("../services/whatsappService");
 const {
   isAudioMedia,
   transcribeTwilioAudio,
 } = require("../services/audioTranscriptionService");
-const { isAlreadyProcessed, markAsProcessed } = require("../utils/idempotency");
+const {
+  isAlreadyProcessed,
+  recordBeforeReply,
+  withMessageLock,
+} = require("../utils/idempotency");
+const { parseInboundWebhook } = require("../utils/webhookPayload");
 const {
   formatUdhaarEntry,
   formatLowStockAlert,
@@ -296,23 +301,51 @@ function getErrorTemplate(language, errorKey) {
 }
 
 async function receiveWebhook(req, res) {
-  // Twilio expects quick 200 response to acknowledge webhook.
+  // Always return 200 immediately so WhatsApp/Twilio do not retry.
   res.status(200).send("ok");
 
-  try {
-    const ownerWaId = req.body?.From;
-    const incomingText = String(req.body?.Body || "").trim();
-    const mediaContentType = req.body?.MediaContentType0;
-    const mediaUrl = req.body?.MediaUrl0;
-    // WhatsApp message ID for idempotency (Twilio wraps this in SmsMessageSid / MessageSid)
-    const messageId = req.body?.MessageSid || req.body?.SmsMessageSid || null;
+  const inbound = parseInboundWebhook(req.body);
+  if (!inbound) {
+    return;
+  }
 
-    // ── IDEMPOTENCY CHECK ─────────────────────────────────────────
-    if (messageId && await isAlreadyProcessed(messageId)) {
-      console.log(`[Idempotency] Duplicate message ${messageId} — skipping`);
+  const { messageId, ownerWaId } = inbound;
+
+  if (messageId && (await isAlreadyProcessed(messageId))) {
+    console.log(`[Idempotency] Duplicate wamid=${messageId} — ignored`);
+    return;
+  }
+
+  await withMessageLock(messageId, async () => {
+    if (messageId && (await isAlreadyProcessed(messageId))) {
+      console.log(`[Idempotency] Duplicate wamid=${messageId} — ignored (in-flight)`);
       return;
     }
+    await processInboundWebhook(inbound);
+  });
+}
 
+async function processInboundWebhook(inbound) {
+  const {
+    messageId,
+    ownerWaId,
+    text: incomingText,
+    mediaContentType,
+    mediaUrl,
+  } = inbound;
+
+  // Record wamid in Supabase before each outbound reply (INSERT — fails on duplicate).
+  async function sendTextMessage({ to, text }) {
+    if (to === ownerWaId && messageId) {
+      const recorded = await recordBeforeReply(messageId, ownerWaId);
+      if (!recorded) {
+        return;
+      }
+    }
+    return whatsappSend({ to, text });
+  }
+
+  try {
     let text = incomingText;
     let isVoice = false;
 
@@ -347,9 +380,6 @@ async function receiveWebhook(req, res) {
     }
 
     const resolvedOwnerPhone = await resolveOwnerPhone(ownerWaId);
-
-    // Mark message as processed now that we've validated it has content
-    if (messageId) await markAsProcessed(messageId, ownerWaId);
 
     // ── REGISTRATION GATE ─────────────────────────────────────────
     // Step A: If user is mid-registration (we asked for shop name), treat
@@ -1178,12 +1208,10 @@ async function receiveWebhook(req, res) {
     }
   } catch (error) {
     console.error('Webhook processing error:', error.message);
-    // Always send some reply, never crash
-    const ownerWaId = req.body?.From;
     if (ownerWaId) {
       await sendTextMessage({
         to: ownerWaId,
-        text: getErrorTemplate('hinglish', 'NETWORK')
+        text: getErrorTemplate('hinglish', 'NETWORK'),
       });
     }
   }

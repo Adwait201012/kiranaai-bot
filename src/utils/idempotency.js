@@ -5,7 +5,7 @@
  *
  * WhatsApp Cloud API can deliver the same webhook multiple times.
  * Before processing any message, call `isAlreadyProcessed(messageId)`.
- * After successful processing, call `markAsProcessed(messageId, ownerPhone)`.
+ * Before sending a reply, call `recordBeforeReply(messageId, ownerPhone)`.
  *
  * Requires the `processed_messages` table (see shop_employees.sql):
  *   CREATE TABLE processed_messages (
@@ -13,23 +13,42 @@
  *     owner_phone  text NOT NULL,
  *     processed_at timestamptz DEFAULT now()
  *   );
- *
- * Usage in webhookController.js:
- *   const { isAlreadyProcessed, markAsProcessed } = require("../utils/idempotency");
- *
- *   const messageId = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id;
- *   if (messageId && await isAlreadyProcessed(messageId)) {
- *     console.log(`[Idempotency] Duplicate message ${messageId} — skipping`);
- *     return;
- *   }
- *   // ... process message ...
- *   if (messageId) await markAsProcessed(messageId, ownerPhone);
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 "use strict";
 
 const { supabase } = require("../config/supabase");
+
+/** In-flight lock: same Node process handling the same wamid concurrently */
+const inFlight = new Map();
+
+/**
+ * @param {string} messageId
+ * @param {() => Promise<void>} fn
+ */
+async function withMessageLock(messageId, fn) {
+  if (!messageId) {
+    return fn();
+  }
+
+  while (inFlight.has(messageId)) {
+    await inFlight.get(messageId);
+  }
+
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  inFlight.set(messageId, gate);
+
+  try {
+    return await fn();
+  } finally {
+    inFlight.delete(messageId);
+    release();
+  }
+}
 
 /**
  * Check if a message has already been processed.
@@ -48,7 +67,6 @@ async function isAlreadyProcessed(messageId) {
       .maybeSingle();
 
     if (error) {
-      // On DB error, fail-open (process the message) to avoid silent drops
       console.error("[Idempotency] Check failed:", error.message);
       return false;
     }
@@ -61,44 +79,15 @@ async function isAlreadyProcessed(messageId) {
 }
 
 /**
- * Mark a message as processed after successful handling.
- * Uses upsert so duplicate inserts don't throw (race condition safety).
- *
- * @param {string} messageId   WhatsApp message ID
- * @param {string} ownerPhone  Resolved owner phone (E.164)
- * @returns {Promise<void>}
- */
-async function markAsProcessed(messageId, ownerPhone) {
-  if (!messageId) return;
-
-  try {
-    const { error } = await supabase
-      .from("processed_messages")
-      .upsert(
-        { message_id: messageId, owner_phone: ownerPhone || "unknown" },
-        { onConflict: "message_id" }
-      );
-
-    if (error) {
-      console.error("[Idempotency] markAsProcessed failed:", error.message);
-    } else {
-      console.log(`[Idempotency] Marked as processed: ${messageId}`);
-    }
-  } catch (err) {
-    console.error("[Idempotency] Unexpected error in markAsProcessed:", err.message);
-  }
-}
-
-/**
- * Reserve a message ID before any business DB write (PUCH step 3).
- * Returns { reserved: true } on first sight, { reserved: false } if duplicate.
+ * INSERT before sending the WhatsApp reply. Returns false if this wamid was
+ * already recorded (duplicate delivery / race).
  *
  * @param {string} messageId
  * @param {string} ownerPhone
- * @returns {Promise<{ reserved: boolean }>}
+ * @returns {Promise<boolean>} true if recorded, false if duplicate
  */
-async function reserveMessageId(messageId, ownerPhone) {
-  if (!messageId) return { reserved: true };
+async function recordBeforeReply(messageId, ownerPhone) {
+  if (!messageId) return true;
 
   try {
     const { error } = await supabase.from("processed_messages").insert({
@@ -108,18 +97,31 @@ async function reserveMessageId(messageId, ownerPhone) {
 
     if (error) {
       if (error.code === "23505") {
-        return { reserved: false };
+        console.log(`[Idempotency] Duplicate reply blocked: ${messageId}`);
+        return false;
       }
-      console.error("[Idempotency] reserveMessageId failed:", error.message);
-      return { reserved: true };
+      console.error("[Idempotency] recordBeforeReply failed:", error.message);
+      return true;
     }
 
-    console.log(`[Idempotency] Reserved: ${messageId}`);
-    return { reserved: true };
+    console.log(`[Idempotency] Recorded before reply: ${messageId}`);
+    return true;
   } catch (err) {
-    console.error("[Idempotency] Unexpected error in reserveMessageId:", err.message);
-    return { reserved: true };
+    console.error("[Idempotency] Unexpected error in recordBeforeReply:", err.message);
+    return true;
   }
 }
 
-module.exports = { isAlreadyProcessed, markAsProcessed, reserveMessageId };
+/**
+ * @deprecated Use recordBeforeReply before outbound messages.
+ */
+async function markAsProcessed(messageId, ownerPhone) {
+  return recordBeforeReply(messageId, ownerPhone);
+}
+
+module.exports = {
+  isAlreadyProcessed,
+  recordBeforeReply,
+  markAsProcessed,
+  withMessageLock,
+};
