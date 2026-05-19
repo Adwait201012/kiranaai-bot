@@ -44,6 +44,12 @@ const {
 const { tryClaimMessage } = require("../utils/idempotency");
 const { parseInboundWebhook } = require("../utils/webhookPayload");
 const {
+  cleanShopName,
+  titleCaseShopName,
+  parseRegistrationIntent,
+  unknownUserMessage,
+} = require("../utils/shopRegistration");
+const {
   parseHinglishUdhaar,
   normaliseTranscript,
   validateParsedForWrite,
@@ -70,7 +76,10 @@ const {
 // Key: owner WhatsApp ID, Value: { timestamp: Date.now(), language: string }
 // Entries expire after 2 minutes to prevent stale confirmations.
 const pendingDeleteConfirmation = new Map();
-const DELETE_CONFIRM_PHRASE = "HAAN DELETE KARO";
+const DELETE_CONFIRM_PHRASES = new Set([
+  "HAAN DELETE KARO",
+  "HAAN SAB DELETE KARO",
+]);
 const DELETE_CONFIRM_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes
 
 // In-memory map for two-step shop registration flow.
@@ -84,10 +93,6 @@ const REGISTRATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 // Key: ownerWaId, Value: { timestamp, options: [], pendingAction: { intent, customerName, amount } }
 const pendingDisambiguation = new Map();
 const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
-
-// Regex to detect registration intent without calling Groq
-const REGISTRATION_TRIGGER_RE =
-  /\b(register\s*karo|shop\s*add\s*karo|shuru\s*karo|register|start)\b/i;
 
 const JOIN_CODE_TRIGGER_RE =
   /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|employee\s*add|staff\s*add|mera\s*code)\b/i;
@@ -105,6 +110,19 @@ function ownerOnly(shopContext, action) {
 function displayBotNumber() {
   const raw = String(env.twilioWhatsappFrom || "").replace(/^whatsapp:/i, "");
   return raw || "[BOT_NUMBER]";
+}
+
+async function runRegistration(ownerWaId, shopName, sendTextMessage) {
+  const result = await registerShop({
+    ownerPhone: ownerWaId,
+    shopName: titleCaseShopName(cleanShopName(shopName)),
+  });
+  if (result.success) {
+    await sendTextMessage({ to: ownerWaId, text: result.message });
+  } else {
+    await sendTextMessage({ to: ownerWaId, text: result.message });
+  }
+  return result.success;
 }
 
 /** Empty 200 — never use res.sendStatus(200); Express sends body "OK" to Twilio. */
@@ -563,75 +581,39 @@ async function processInboundWebhook(inbound) {
       }
 
       // Apply title-case to shop name (Fix 3)
-      const rawShopName = text.trim();
-      if (!rawShopName) {
+      const rawShopName = cleanShopName(text);
+      if (!rawShopName || rawShopName.length < 2) {
         await sendTextMessage({
           to: ownerWaId,
-          text: "Shop ka naam nahi mila. Dobara 'Register karo' bhejo aur phir shop ka naam bhejo."
+          text:
+            "Shop ka naam nahi mila. Dobara bhejein, jaise: Register Sharma General Store",
         });
         return;
       }
 
-      const shopName = rawShopName
-        .split(" ")
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join(" ");
-
-      try {
-        await registerShop({ ownerPhone: ownerWaId, shopName });
-        await sendTextMessage({
-          to: ownerWaId,
-          text: getTemplate('hinglish', 'GREETING')
-        });
-      } catch (err) {
-        await sendTextMessage({
-          to: ownerWaId,
-          text: err.message || "Registration nahi ho payi. Dobara try karo."
-        });
-      }
+      await runRegistration(ownerWaId, rawShopName, sendTextMessage);
       return;
     }
 
     // Step B: Owners must register before shop context exists.
     const registered = await isShopRegistered(ownerWaId);
     if (!registered) {
-      if (REGISTRATION_TRIGGER_RE.test(text)) {
-        // Extract shop name from the same message (Fix 2)
-        // Pattern: everything after the trigger keyword
-        const shopNameMatch = text.replace(REGISTRATION_TRIGGER_RE, "").trim();
-        if (shopNameMatch) {
-          // Shop name found inline — register immediately (Fix 3: title-case)
-          const shopName = shopNameMatch
-            .split(" ")
-            .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-            .join(" ");
-          try {
-            await registerShop({ ownerPhone: ownerWaId, shopName });
-            await sendTextMessage({
-              to: ownerWaId,
-              text: getTemplate('hinglish', 'GREETING')
-            });
-          } catch (err) {
-            await sendTextMessage({
-              to: ownerWaId,
-              text: err.message || "Registration nahi ho payi. Dobara try karo."
-            });
-          }
-        } else {
-          // No shop name in message — fall back to two-step flow
-          pendingShopName.set(ownerWaId, { timestamp: Date.now() });
-          await sendTextMessage({
-            to: ownerWaId,
-            text: "Apni shop ka naam kya hai? (sirf naam bhejo, jaise: Sharma General Store)"
-          });
-        }
-      } else {
+      const regIntent = parseRegistrationIntent(text);
+      if (regIntent?.type === "register") {
+        await runRegistration(ownerWaId, regIntent.shopName, sendTextMessage);
+      } else if (regIntent?.type === "prompt") {
+        pendingShopName.set(ownerWaId, { timestamp: Date.now() });
         await sendTextMessage({
           to: ownerWaId,
           text:
-            "Aapka number registered nahi hai.\n" +
-            "Agar aap owner hain: 'Register [dukaan naam]' likhein\n" +
-            "Agar aap employee hain: 'Join [CODE]' likhein",
+            "Apni shop ka naam kya hai?\n" +
+            "Jaise: Sharma General Store\n" +
+            "(ya ek message mein: Register Sharma General Store)",
+        });
+      } else {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: unknownUserMessage(),
         });
       }
       return;
@@ -642,10 +624,7 @@ async function processInboundWebhook(inbound) {
     if (!shopContext) {
       await sendTextMessage({
         to: ownerWaId,
-        text:
-          "Aapka number registered nahi hai.\n" +
-          "Agar aap owner hain: 'Register [dukaan naam]' likhein\n" +
-          "Agar aap employee hain: 'Join [CODE]' likhein",
+        text: unknownUserMessage(),
       });
       return;
     }
@@ -746,12 +725,19 @@ async function processInboundWebhook(inbound) {
       }
 
       const upperText = text.toUpperCase().trim();
-      if (upperText === DELETE_CONFIRM_PHRASE) {
+      if (DELETE_CONFIRM_PHRASES.has(upperText)) {
         try {
-          await deleteAllOwnerData({ ownerPhone: resolvedOwnerPhone });
+          const resetResult = await deleteAllOwnerData({
+            ownerPhone: resolvedOwnerPhone,
+          });
+          const shopLabel =
+            resetResult.shopName || shopContext.shop_name || "aapki dukaan";
           await sendTextMessage({
             to: ownerWaId,
-            text: getTemplate(pending.language || 'hinglish', 'RESET_DONE')
+            text:
+              "✅ Sab data delete ho gaya!\n\n" +
+              `🏪 Aapki dukaan registered hai: *${shopLabel}*\n` +
+              "Naya hisaab shuru kar sakte hain.",
           });
         } catch (error) {
           console.error('deleteAllOwnerData failed:', error.message);

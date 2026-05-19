@@ -44,13 +44,16 @@ const resetAll = args.includes("--all");
 const phoneIdx = args.indexOf("--phone");
 const targetPhone = phoneIdx !== -1 ? args[phoneIdx + 1] : null;
 
-// Tables to wipe and their owner_phone column name
+// Business data only — NEVER add shops or shop_employees here.
+// Deleting shops = owner loses bot access permanently.
+const TABLES_TO_RESET = [
+  { name: "udhaar_logs", ownerCol: "owner_phone" },
+  { name: "inventory", ownerCol: "owner_phone" },
+  { name: "expenses", ownerCol: "owner_phone" },
+];
+
 const TABLES = resetAll
-  ? [
-      { name: "inventory",   ownerCol: "owner_phone" },
-      { name: "udhaar_logs", ownerCol: "owner_phone" },
-      { name: "expenses",    ownerCol: "owner_phone" },
-    ]
+  ? TABLES_TO_RESET
   : [{ name: "inventory", ownerCol: "owner_phone" }];
 
 // ── CONFIRMATION PROMPT ───────────────────────────────────────────────────────

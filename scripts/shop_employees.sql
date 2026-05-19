@@ -16,10 +16,7 @@ CREATE TABLE IF NOT EXISTS public.shops (
   shop_name         text          NOT NULL,
   created_at        timestamptz   DEFAULT now(),
 
-  -- Phone must be a valid E.164 number: optional '+', then 7-15 digits.
-  -- Indian mobile: +91XXXXXXXXXX (12 chars total).
-  CONSTRAINT shops_owner_phone_e164
-    CHECK (owner_phone ~ '^\+?[1-9]\d{6,14}$'),
+  -- owner_phone: Twilio WhatsApp ID (e.g. whatsapp:+91XXXXXXXXXX)
 
   -- One owner can have only one shop (extend to UNIQUE(owner_phone, shop_name)
   -- if you want multi-shop owners in future).
@@ -48,9 +45,7 @@ CREATE TABLE IF NOT EXISTS public.shop_employees (
   is_owner        boolean       NOT NULL DEFAULT false,
   created_at      timestamptz   DEFAULT now(),
 
-  -- Phone format validation (E.164)
-  CONSTRAINT emp_phone_e164
-    CHECK (employee_phone ~ '^\+?[1-9]\d{6,14}$'),
+  -- employee_phone: Twilio WhatsApp ID (e.g. whatsapp:+91XXXXXXXXXX)
 
   -- An employee can work for multiple shops (fixed: was UNIQUE(employee_phone))
   CONSTRAINT emp_shop_unique UNIQUE (shop_id, employee_phone)

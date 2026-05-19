@@ -27,3 +27,17 @@ CREATE INDEX IF NOT EXISTS idx_udhaar_logs_shop_id
   ON public.udhaar_logs (shop_id);
 
 ALTER TABLE public.pending_join_requests ENABLE ROW LEVEL SECURITY;
+
+-- Fix: join codes are generated on demand (must be nullable)
+ALTER TABLE public.shops
+  ALTER COLUMN join_code DROP NOT NULL,
+  ALTER COLUMN join_code_expires_at DROP NOT NULL;
+
+-- Fix: udhaar attribution columns optional for legacy rows
+ALTER TABLE public.udhaar_logs
+  ALTER COLUMN shop_id DROP NOT NULL,
+  ALTER COLUMN entered_by DROP NOT NULL;
+
+-- Fix: app stores whatsapp:+91… IDs (Twilio), not bare E.164
+ALTER TABLE public.shops DROP CONSTRAINT IF EXISTS shops_owner_phone_e164;
+ALTER TABLE public.shop_employees DROP CONSTRAINT IF EXISTS emp_phone_e164;

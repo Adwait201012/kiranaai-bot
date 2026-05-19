@@ -182,6 +182,28 @@ async function handleJoinApproval(ownerPhone, employeePhone, approved) {
   };
 }
 
+async function ensureOwnerEmployeeRow(shop) {
+  const { data: emp } = await supabase
+    .from("shop_employees")
+    .select("id")
+    .eq("shop_id", shop.id)
+    .eq("employee_phone", shop.owner_phone)
+    .maybeSingle();
+
+  if (emp) return;
+
+  const { error } = await supabase.from("shop_employees").insert({
+    shop_id: shop.id,
+    shop_owner_phone: shop.owner_phone,
+    employee_phone: shop.owner_phone,
+    employee_name: "Owner",
+    is_owner: true,
+  });
+  if (error) {
+    console.error("ensureOwnerEmployeeRow failed:", error.message);
+  }
+}
+
 async function resolveShopId(senderPhone) {
   const { data: ownedShop } = await supabase
     .from("shops")
@@ -189,6 +211,7 @@ async function resolveShopId(senderPhone) {
     .eq("owner_phone", senderPhone)
     .maybeSingle();
   if (ownedShop) {
+    await ensureOwnerEmployeeRow(ownedShop);
     return {
       id: ownedShop.id,
       shop_name: ownedShop.shop_name,

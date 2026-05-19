@@ -142,43 +142,82 @@ async function getShopDetails(ownerPhone) {
 }
 
 async function registerShop({ ownerPhone, shopName }) {
+  const trimmedName = String(shopName || "").trim();
+  if (!trimmedName || trimmedName.length < 2) {
+    return {
+      success: false,
+      message: "Dukaan ka naam kam se kam 2 characters ka hona chahiye.",
+    };
+  }
+
   try {
+    const { data: existing } = await supabase
+      .from("shops")
+      .select("id, shop_name")
+      .eq("owner_phone", ownerPhone)
+      .maybeSingle();
+
+    if (existing) {
+      return {
+        success: false,
+        message:
+          `Aapki dukaan already registered hai: *${existing.shop_name}*\n` +
+          `Join code ke liye likhein: "Join code do"`,
+        shopName: existing.shop_name,
+      };
+    }
+
     const { data: shop, error: shopError } = await supabase
       .from("shops")
-      .insert([{ owner_phone: ownerPhone, shop_name: shopName }])
-      .select("id")
+      .insert({
+        owner_phone: ownerPhone,
+        shop_name: trimmedName,
+      })
+      .select()
       .single();
 
     if (shopError) {
-      console.error("Supabase insert failed for registerShop:", shopError.message);
+      console.error("Shop insert error:", shopError.code, shopError.message, shopError.details);
       if (shopError.code === "23505") {
-        throw new Error("Yeh number pehle se registered hai!");
+        return {
+          success: false,
+          message:
+            "Aapka number pehle se registered hai. 'Join code do' likhein.",
+        };
       }
-      throw new Error("Database error. Try again!");
+      return {
+        success: false,
+        message: `❌ Registration nahi hua. Error: ${shopError.message}`,
+      };
     }
 
-    const { error: empError } = await supabase.from("shop_employees").upsert(
-      [
-        {
-          shop_id: shop.id,
-          shop_owner_phone: ownerPhone,
-          employee_phone: ownerPhone,
-          employee_name: "Owner",
-          is_owner: true,
-        },
-      ],
-      { onConflict: "shop_id,employee_phone" }
-    );
+    const { error: empError } = await supabase.from("shop_employees").insert({
+      shop_id: shop.id,
+      shop_owner_phone: ownerPhone,
+      employee_phone: ownerPhone,
+      employee_name: "Owner",
+      is_owner: true,
+    });
 
     if (empError) {
-      console.error("shop_employees upsert failed for registerShop:", empError.message);
-      throw new Error("Database error. Try again!");
+      console.error("Employee insert error:", empError.code, empError.message);
     }
 
-    return true;
+    return {
+      success: true,
+      message:
+        `✅ Dukaan registered!\n\n` +
+        `🏪 Naam: *${shop.shop_name}*\n` +
+        `📱 Aapka number: ${ownerPhone}\n\n` +
+        `Employee add karne ke liye likhein: "Join code do"`,
+      shopName: shop.shop_name,
+    };
   } catch (error) {
     console.error("registerShop error:", error.message);
-    throw error;
+    return {
+      success: false,
+      message: `❌ Registration nahi hua. Error: ${error.message}`,
+    };
   }
 }
 
@@ -824,33 +863,37 @@ async function getMonthlyExpenses({ ownerPhone }) {
   }
 }
 
+// Business data only — NEVER delete shops or shop_employees (owner would lose access).
+const TABLES_TO_RESET = [
+  { name: "udhaar_logs", ownerCol: "owner_phone" },
+  { name: "inventory", ownerCol: "owner_phone" },
+  { name: "expenses", ownerCol: "owner_phone" },
+  { name: "customers", ownerCol: "owner_phone" },
+];
+
 async function deleteAllOwnerData({ ownerPhone }) {
   try {
-    // Delete from all 4 tables in parallel
-    const [udhaarResult, inventoryResult, customersResult, expensesResult] = await Promise.all([
-      supabase.from("udhaar_logs").delete().eq("owner_phone", ownerPhone),
-      supabase.from("inventory").delete().eq("owner_phone", ownerPhone),
-      supabase.from("customers").delete().eq("owner_phone", ownerPhone),
-      supabase.from("expenses").delete().eq("owner_phone", ownerPhone),
-    ]);
+    const shopDetails = await getShopDetails(ownerPhone);
 
-    // Check for errors in any table
-    const errors = [
-      udhaarResult.error,
-      inventoryResult.error,
-      customersResult.error,
-      expensesResult.error,
-    ].filter(Boolean);
+    const results = await Promise.all(
+      TABLES_TO_RESET.map(({ name, ownerCol }) =>
+        supabase.from(name).delete().eq(ownerCol, ownerPhone)
+      )
+    );
 
+    const errors = results.map((r) => r.error).filter(Boolean);
     if (errors.length > 0) {
-      console.error('deleteAllOwnerData partial errors:', errors.map(e => e.message));
-      throw new Error('Database error during delete. Try again!');
+      console.error(
+        "deleteAllOwnerData partial errors:",
+        errors.map((e) => e.message)
+      );
+      throw new Error("Database error during delete. Try again!");
     }
 
-    console.log(`[RESET] All data deleted for owner: ${ownerPhone}`);
-    return true;
+    console.log(`[RESET] Business data deleted for owner: ${ownerPhone}`);
+    return { shopName: shopDetails?.shop_name || null };
   } catch (error) {
-    console.error('deleteAllOwnerData error:', error.message);
+    console.error("deleteAllOwnerData error:", error.message);
     throw error;
   }
 }
