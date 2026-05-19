@@ -261,26 +261,25 @@ async function logWapas({ customerName, amount, ownerPhone }) {
 
 async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
   try {
-    const normalizedSearchName = normalizeCustomerName(customerName);
-    const { data, error } = await supabase
-      .from("udhaar_logs")
-      .select("customer_name,amount")
-      .eq("owner_phone", ownerPhone);
-
-    if (error) {
-      console.error('Supabase fetch failed:', error.message);
-      throw new Error('Database error. Try again!');
+    const canonicalName = String(customerName || "").trim();
+    if (!canonicalName) {
+      return 0;
     }
 
-    const total = (data || [])
-      .filter((row) => {
-        const normalizedRowName = normalizeCustomerName(row.customer_name);
-        return isCustomerMatch(normalizedRowName, normalizedSearchName);
-      })
-      .reduce((sum, row) => sum + Number(row.amount || 0), 0);
-    return total;
+    const { data, error } = await supabase
+      .from("udhaar_logs")
+      .select("amount")
+      .eq("owner_phone", ownerPhone)
+      .eq("customer_name", canonicalName);
+
+    if (error) {
+      console.error("Supabase fetch failed:", error.message);
+      throw new Error("Database error. Try again!");
+    }
+
+    return (data || []).reduce((sum, row) => sum + Number(row.amount || 0), 0);
   } catch (error) {
-    console.error('getCustomerUdhaarTotal error:', error.message);
+    console.error("getCustomerUdhaarTotal error:", error.message);
     throw error;
   }
 }

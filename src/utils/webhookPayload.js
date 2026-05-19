@@ -38,20 +38,27 @@ function parseInboundWebhook(body) {
       return null;
     }
 
+    // Voice notes arrive as a separate webhook with a different wamid — skip them.
+    if (message.type === "audio") {
+      return null;
+    }
+
+    // Only handle plain text inbound messages (avoids double-processing with audio).
+    if (message.type !== "text") {
+      return null;
+    }
+
     const ownerWaId = normalizeWaId(message.from);
     let text = "";
     let mediaContentType = null;
     let mediaUrl = null;
 
-    if (message.type === "text" && message.text?.body) {
+    if (message.text?.body) {
       text = String(message.text.body).trim();
-    } else if (message.type === "audio" && message.audio) {
-      mediaContentType = message.audio.mime_type || "audio/ogg";
-      mediaUrl = message.audio.id || null;
-    } else if (message.type === "button" && message.button?.text) {
-      text = String(message.button.text).trim();
-    } else if (message.type === "interactive" && message.interactive?.button_reply?.title) {
-      text = String(message.interactive.button_reply.title).trim();
+    }
+
+    if (!text) {
+      return null;
     }
 
     return {
@@ -68,6 +75,11 @@ function parseInboundWebhook(body) {
   if (body.From) {
     const messageId = body.MessageSid || body.SmsMessageSid || null;
     if (!messageId) {
+      return null;
+    }
+
+    const mediaType = String(body.MediaContentType0 || "").toLowerCase();
+    if (mediaType.includes("audio")) {
       return null;
     }
 

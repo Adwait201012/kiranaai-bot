@@ -35,11 +35,7 @@ const {
   isAudioMedia,
   transcribeTwilioAudio,
 } = require("../services/audioTranscriptionService");
-const {
-  isAlreadyProcessed,
-  recordBeforeReply,
-  withMessageLock,
-} = require("../utils/idempotency");
+const { tryClaimMessage } = require("../utils/idempotency");
 const { parseInboundWebhook } = require("../utils/webhookPayload");
 const {
   formatUdhaarEntry,
@@ -301,47 +297,37 @@ function getErrorTemplate(language, errorKey) {
 }
 
 async function receiveWebhook(req, res) {
-  // Always return 200 immediately so WhatsApp/Twilio do not retry.
-  res.status(200).send("ok");
+  try {
+    res.sendStatus(200);
 
-  const inbound = parseInboundWebhook(req.body);
-  if (!inbound) {
-    return;
-  }
-
-  const { messageId, ownerWaId } = inbound;
-
-  if (messageId && (await isAlreadyProcessed(messageId))) {
-    console.log(`[Idempotency] Duplicate wamid=${messageId} — ignored`);
-    return;
-  }
-
-  await withMessageLock(messageId, async () => {
-    if (messageId && (await isAlreadyProcessed(messageId))) {
-      console.log(`[Idempotency] Duplicate wamid=${messageId} — ignored (in-flight)`);
+    const inbound = parseInboundWebhook(req.body);
+    if (!inbound) {
       return;
     }
+
+    const { claimed } = await tryClaimMessage(inbound.messageId, inbound.ownerWaId);
+    if (!claimed) {
+      return;
+    }
+
     await processInboundWebhook(inbound);
-  });
+  } catch (error) {
+    console.error("[Webhook] Unhandled error:", error.message);
+    if (!res.headersSent) {
+      res.sendStatus(200);
+    }
+  }
 }
 
 async function processInboundWebhook(inbound) {
   const {
-    messageId,
     ownerWaId,
     text: incomingText,
     mediaContentType,
     mediaUrl,
   } = inbound;
 
-  // Record wamid in Supabase before each outbound reply (INSERT — fails on duplicate).
   async function sendTextMessage({ to, text }) {
-    if (to === ownerWaId && messageId) {
-      const recorded = await recordBeforeReply(messageId, ownerWaId);
-      if (!recorded) {
-        return;
-      }
-    }
     return whatsappSend({ to, text });
   }
 
@@ -648,14 +634,11 @@ async function processInboundWebhook(inbound) {
           }
 
           await logUdhaar({ customerName, amount, ownerPhone: resolvedOwnerPhone });
-          
-          // Ensure database write is fully committed and queryable
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          let total = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          if (customers.length === 0 && total < amount) {
-            total = amount;
-          }
+
+          const total = await getCustomerUdhaarTotal({
+            customerName,
+            ownerPhone: resolvedOwnerPhone,
+          });
           const safeTotal = Math.max(0, total);
           await sendTextMessage({
             to: ownerWaId,
