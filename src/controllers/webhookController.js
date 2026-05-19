@@ -38,6 +38,13 @@ const {
 const { tryClaimMessage } = require("../utils/idempotency");
 const { parseInboundWebhook } = require("../utils/webhookPayload");
 const {
+  parseHinglishUdhaar,
+  normaliseTranscript,
+  isValidCustomerName,
+} = require("../../scripts/parseHinglishUdhaar");
+
+const HISAAB_SAVE_FAILED = "❌ Hisaab save nahi hua. Dobara try karein.";
+const {
   formatUdhaarEntry,
   formatLowStockAlert,
   formatSalesReport,
@@ -365,6 +372,8 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
+    text = normaliseTranscript(text);
+
     const resolvedOwnerPhone = await resolveOwnerPhone(ownerWaId);
 
     // ── REGISTRATION GATE ─────────────────────────────────────────
@@ -605,48 +614,87 @@ async function processInboundWebhook(inbound) {
         }
 
         case "LOG_UDHAAR": {
-          if (!customerName || !amount || amount <= 0) {
+          const parsed = parseHinglishUdhaar(text);
+          if (parsed.needsClarification) {
             await sendTextMessage({
               to: ownerWaId,
-              text: getErrorTemplate(language, 'NAME_REQUIRED')
+              text: parsed.clarificationMessage || "Grahak ka naam kya hai?",
+            });
+            return;
+          }
+
+          if (!isValidCustomerName(customerName) && parsed.customerName) {
+            customerName = parsed.customerName;
+          }
+          if ((!amount || amount <= 0) && parsed.amount > 0) {
+            amount = parsed.amount;
+          }
+
+          if (!customerName || !amount || amount <= 0 || !isValidCustomerName(customerName)) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getErrorTemplate(language, "NAME_REQUIRED"),
             });
             return;
           }
 
           const customers = await searchCustomersByName({ customerName, ownerPhone: resolvedOwnerPhone });
           if (customers.length === 0) {
-            const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
-            customerName = newCust.customer_name;
+            try {
+              const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
+              customerName = newCust.customer_name;
+            } catch (createErr) {
+              console.error("createCustomer failed:", createErr.message);
+              await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+              return;
+            }
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
             pendingDisambiguation.set(ownerWaId, {
               timestamp: Date.now(),
               options: customers,
-              pendingAction: aiResult
+              pendingAction: aiResult,
             });
             const optionsText = customers.map((c, i) => `${i + 1}. ${c.customer_name}`).join("\n");
             await sendTextMessage({
               to: ownerWaId,
-              text: `Kaun sa ${customerName} — \n${optionsText}\n(number bhejo)`
+              text: `Kaun sa ${customerName} — \n${optionsText}\n(number bhejo)`,
             });
             break;
           }
 
-          await logUdhaar({ customerName, amount, ownerPhone: resolvedOwnerPhone });
-
-          const total = await getCustomerUdhaarTotal({
+          const { error: insertError } = await logUdhaar({
             customerName,
+            amount,
             ownerPhone: resolvedOwnerPhone,
           });
+          if (insertError) {
+            console.error("LOG_UDHAAR insert failed:", insertError.message);
+            await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+            return;
+          }
+
+          let total;
+          try {
+            total = await getCustomerUdhaarTotal({
+              customerName,
+              ownerPhone: resolvedOwnerPhone,
+            });
+          } catch (totalErr) {
+            console.error("getCustomerUdhaarTotal failed:", totalErr.message);
+            await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+            return;
+          }
+
           const safeTotal = Math.max(0, total);
           await sendTextMessage({
             to: ownerWaId,
             text: getTemplate(language, "LOG_UDHAAR", {
               name: displayName(customerName),
               amount: formatAmount(amount),
-              total: formatAmount(safeTotal)
-            })
+              total: formatAmount(safeTotal),
+            }),
           });
           break;
         }
@@ -703,37 +751,79 @@ async function processInboundWebhook(inbound) {
         }
 
         case "LOG_WAPAS": {
-          if (!customerName || !amount || amount <= 0) {
+          const parsedWapas = parseHinglishUdhaar(text);
+          if (parsedWapas.needsClarification) {
             await sendTextMessage({
               to: ownerWaId,
-              text: getErrorTemplate(language, 'NAME_REQUIRED')
+              text: parsedWapas.clarificationMessage || "Grahak ka naam kya hai?",
+            });
+            return;
+          }
+
+          if (!isValidCustomerName(customerName) && parsedWapas.customerName) {
+            customerName = parsedWapas.customerName;
+          }
+          if ((!amount || amount <= 0) && parsedWapas.amount > 0) {
+            amount = parsedWapas.amount;
+          }
+
+          if (!customerName || !amount || amount <= 0 || !isValidCustomerName(customerName)) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: getErrorTemplate(language, "NAME_REQUIRED"),
             });
             return;
           }
 
           const customers = await searchCustomersByName({ customerName, ownerPhone: resolvedOwnerPhone });
           if (customers.length === 0) {
-            const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
-            customerName = newCust.customer_name;
+            try {
+              const newCust = await createCustomer({ customerName, ownerPhone: resolvedOwnerPhone });
+              customerName = newCust.customer_name;
+            } catch (createErr) {
+              console.error("createCustomer failed:", createErr.message);
+              await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+              return;
+            }
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
             pendingDisambiguation.set(ownerWaId, {
               timestamp: Date.now(),
               options: customers,
-              pendingAction: aiResult
+              pendingAction: aiResult,
             });
             const optionsText = customers.map((c, i) => `${i + 1}. ${c.customer_name}`).join("\n");
             await sendTextMessage({
               to: ownerWaId,
-              text: `Kaun sa ${customerName} — \n${optionsText}\n(number bhejo)`
+              text: `Kaun sa ${customerName} — \n${optionsText}\n(number bhejo)`,
             });
             break;
           }
 
-          await logWapas({ customerName, amount, ownerPhone: resolvedOwnerPhone });
-          const remaining = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          
+          const { error: wapasInsertError } = await logWapas({
+            customerName,
+            amount,
+            ownerPhone: resolvedOwnerPhone,
+          });
+          if (wapasInsertError) {
+            console.error("LOG_WAPAS insert failed:", wapasInsertError.message);
+            await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+            return;
+          }
+
+          let remaining;
+          try {
+            remaining = await getCustomerUdhaarTotal({
+              customerName,
+              ownerPhone: resolvedOwnerPhone,
+            });
+          } catch (totalErr) {
+            console.error("getCustomerUdhaarTotal failed:", totalErr.message);
+            await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
+            return;
+          }
+
           if (remaining <= 0) {
             let saafMsg;
             const display = displayName(customerName);
@@ -1122,7 +1212,10 @@ async function processInboundWebhook(inbound) {
           const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
           const lines = entries.map((entry, i) => {
-            const entryIST = new Date(new Date(entry.created_at).getTime() + IST_OFFSET_MS);
+            const createdMs = /^\d+$/.test(String(entry.created_at || ""))
+              ? parseInt(entry.created_at, 10) * 1000
+              : new Date(entry.created_at).getTime();
+            const entryIST = new Date(createdMs + IST_OFFSET_MS);
             
             let hours = entryIST.getUTCHours();
             const minutes = entryIST.getUTCMinutes();

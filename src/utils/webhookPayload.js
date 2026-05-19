@@ -61,12 +61,17 @@ function parseInboundWebhook(body) {
       return null;
     }
 
+    const messageTimestamp = message.timestamp
+      ? new Date(parseInt(message.timestamp, 10) * 1000)
+      : null;
+
     return {
       messageId: message.id,
       ownerWaId,
       text,
       mediaContentType,
       mediaUrl,
+      messageTimestamp,
       source: "cloud_api",
     };
   }

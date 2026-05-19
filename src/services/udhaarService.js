@@ -224,14 +224,14 @@ async function logUdhaar({ customerName, amount, ownerPhone }) {
       .single();
 
     if (error) {
-      console.error('Supabase insert failed:', error.message);
-      throw new Error('Database error. Try again!');
+      console.error("Supabase insert failed (logUdhaar):", error.message);
+      return { data: null, error };
     }
 
-    return data;
+    return { data, error: null };
   } catch (error) {
-    console.error('logUdhaar error:', error.message);
-    throw error;
+    console.error("logUdhaar error:", error.message);
+    return { data: null, error };
   }
 }
 
@@ -248,14 +248,14 @@ async function logWapas({ customerName, amount, ownerPhone }) {
       .single();
 
     if (error) {
-      console.error('Supabase insert failed:', error.message);
-      throw new Error('Database error. Try again!');
+      console.error("Supabase insert failed (logWapas):", error.message);
+      return { data: null, error };
     }
 
-    return data;
+    return { data, error: null };
   } catch (error) {
-    console.error('logWapas error:', error.message);
-    throw error;
+    console.error("logWapas error:", error.message);
+    return { data: null, error };
   }
 }
 
