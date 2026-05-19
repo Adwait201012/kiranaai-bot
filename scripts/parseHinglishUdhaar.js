@@ -25,18 +25,7 @@ const MULTI_WORD_PHRASES = [
 
 const HONORIFICS = new Set(["ji", "bhai", "ben", "behen", "didi", "sahab", "sir"]);
 
-const SPOKEN_AMOUNTS = [
-  ["paanch hazaar", 5000],
-  ["panch hazaar", 5000],
-  ["teen hazaar", 3000],
-  ["do hazaar", 2000],
-  ["ek hazaar", 1000],
-  ["paanch sau", 500],
-  ["panch sau", 500],
-];
-
 const ASR_NAME_FIXES = [
-  [/\bmotion\b/gi, "mohan"],
   [/\bdivy\b/gi, "diya"],
   [/\bdea\b/gi, "diya"],
   [/\bmotion\b/gi, "mohan"],
@@ -44,36 +33,36 @@ const ASR_NAME_FIXES = [
 
 const NAME_KEYWORD_COLLISIONS = new Set(["diya", "liya", "mila"]);
 
-// ── normaliseTranscript ───────────────────────────────────────────────────────
-
-function normaliseTranscript(message) {
-  let text = String(message || "")
+/** Pre-process raw message before amount/name extraction */
+function normaliseText(text) {
+  let result = String(text || "")
     .replace(/₹/g, "")
+    .replace(/,/g, "")
+    .replace(/(\d+)\s*k\b/gi, (_, n) => String(parseInt(n, 10) * 1000))
+    .replace(/paanch\s*sau/gi, "500")
+    .replace(/panch\s*sau/gi, "500")
+    .replace(/ek\s*hazaar/gi, "1000")
+    .replace(/do\s*hazaar/gi, "2000")
+    .replace(/teen\s*hazaar/gi, "3000")
+    .replace(/char\s*hazaar/gi, "4000")
+    .replace(/paanch\s*hazaar/gi, "5000")
+    .replace(/panch\s*hazaar/gi, "5000")
+    .replace(/das\s*hazaar/gi, "10000")
     .replace(/\s+/g, " ")
     .trim();
 
   for (const [pattern, replacement] of ASR_NAME_FIXES) {
-    text = text.replace(pattern, replacement);
+    result = result.replace(pattern, replacement);
   }
 
-  let lower = text.toLowerCase();
-  for (const [phrase, value] of SPOKEN_AMOUNTS) {
-    if (lower.includes(phrase)) {
-      text = text.replace(new RegExp(phrase, "gi"), String(value));
-      lower = text.toLowerCase();
-    }
-  }
+  // Accidental trailing k: 1000k → 1000
+  result = result.replace(/\b(\d{3,})k\b/gi, "$1");
 
-  // Accidental trailing k on large numbers: 1000k → 1000
-  text = text.replace(/\b(\d{3,})k\b/gi, "$1");
+  return flattenMultiWordKeywords(result);
+}
 
-  // Expand 1K / 2k / 1.5k style
-  text = text.replace(/\b(\d[\d,]*\.?\d*)\s*([kK])\b/g, (_, num) => {
-    const n = parseFloat(String(num).replace(/,/g, ""));
-    return String(Math.round(n * 1000));
-  });
-
-  return flattenMultiWordKeywords(text);
+function normaliseTranscript(message) {
+  return normaliseText(message);
 }
 
 function flattenMultiWordKeywords(text) {
@@ -86,20 +75,17 @@ function flattenMultiWordKeywords(text) {
   return result;
 }
 
-// ── amount ────────────────────────────────────────────────────────────────────
-
 function extractAmount(text) {
-  const match = text.match(/\b(\d[\d,]*\.?\d*)\b/);
+  const match = text.match(/\b(\d[\d]*\.?\d*)\b/);
   if (!match) return null;
-  const raw = parseFloat(match[1].replace(/,/g, ""));
-  return Number.isFinite(raw) ? Math.round(raw) : null;
+  const raw = parseFloat(match[1]);
+  if (!Number.isFinite(raw)) return null;
+  return Math.round(raw);
 }
 
 function stripAmount(text) {
-  return text.replace(/\b\d[\d,]*\.?\d*\b/g, " ").replace(/\s+/g, " ").trim();
+  return text.replace(/\b\d[\d]*\.?\d*\b/g, " ").replace(/\s+/g, " ").trim();
 }
-
-// ── type ────────────────────────────────────────────────────────────────────────
 
 function detectType(lowerText) {
   const firstWord = lowerText.split(/\s+/)[0] || "";
@@ -113,8 +99,6 @@ function detectType(lowerText) {
   }
   return null;
 }
-
-// ── name ─────────────────────────────────────────────────────────────────────────
 
 function isValidCustomerName(name) {
   if (!name || typeof name !== "string") return false;
@@ -152,7 +136,6 @@ function buildKeywordSetForNameExtraction(lowerText) {
 }
 
 function extractCustomerName(text) {
-  const firstWord = text.split(/\s+/)[0] || "";
   const keywordSet = buildKeywordSetForNameExtraction(text);
 
   const stopWords = new Set([
@@ -186,7 +169,55 @@ function calculateConfidence({ customerName, amount, type }) {
   return score;
 }
 
-// ── main ────────────────────────────────────────────────────────────────────────
+/**
+ * Three validation gates before any DB write (used by webhook handler).
+ */
+function validateParsedForWrite(parsed, expectedType) {
+  if (!parsed.customerName || parsed.customerName.length < 2 || !isValidCustomerName(parsed.customerName)) {
+    return {
+      ok: false,
+      message: "Grahak ka naam samajh nahi aaya. Naam batayein?",
+    };
+  }
+
+  const amount = Math.round(Number(parsed.amount));
+  if (!amount || amount <= 0) {
+    return {
+      ok: false,
+      message: "Amount samajh nahi aaya. Kitne rupaye? (jaise: 2000)",
+    };
+  }
+
+  if (!parsed.type) {
+    return {
+      ok: false,
+      message: "Udhaar hai ya wapasi? Please confirm karein.",
+    };
+  }
+
+  if (expectedType && parsed.type !== expectedType) {
+    return {
+      ok: false,
+      message: expectedType === "credit"
+        ? "Udhaar ke liye 'udhaar' likhein. Example: Sharma ji 2000 udhaar"
+        : "Wapas ke liye 'wapas' likhein. Example: Sharma ji 500 wapas",
+    };
+  }
+
+  if (parsed.confidence < CONFIDENCE_THRESHOLD) {
+    return {
+      ok: false,
+      message: parsed.clarificationMessage || "Samajh nahi aaya. Example: 'Sharma ji 2000 udhaar'",
+    };
+  }
+
+  return {
+    ok: true,
+    customerName: parsed.customerName,
+    amount,
+    type: parsed.type,
+  };
+}
 
 function parseHinglishUdhaar(message) {
   const empty = {
@@ -195,17 +226,18 @@ function parseHinglishUdhaar(message) {
     type: null,
     confidence: 0,
     needsClarification: true,
-    clarificationMessage: "Grahak ka naam kya hai?",
+    clarificationMessage: "Grahak ka naam samajh nahi aaya. Naam batayein?",
   };
 
   if (!message || typeof message !== "string") {
     return { ...empty, needsClarification: false };
   }
 
-  const normalized = normaliseTranscript(message);
+  const normalized = normaliseText(message);
   const lower = normalized.toLowerCase();
 
-  const amount = extractAmount(normalized);
+  const rawAmount = extractAmount(normalized);
+  const amount = rawAmount != null ? Math.round(Number(rawAmount)) : null;
   const type = detectType(lower);
   const customerName = extractCustomerName(lower);
   const confidence = calculateConfidence({ customerName, amount, type });
@@ -215,15 +247,16 @@ function parseHinglishUdhaar(message) {
 
   if (!isValidCustomerName(customerName)) {
     needsClarification = true;
-    clarificationMessage = "Grahak ka naam kya hai?";
-  } else if (confidence < CONFIDENCE_THRESHOLD) {
+    clarificationMessage = "Grahak ka naam samajh nahi aaya. Naam batayein?";
+  } else if (!amount || amount <= 0) {
     needsClarification = true;
-    clarificationMessage = !amount
-      ? "Kitne rupaye?"
-      : "Grahak ka naam kya hai?";
+    clarificationMessage = "Amount samajh nahi aaya. Kitne rupaye? (jaise: 2000)";
   } else if (!type) {
     needsClarification = true;
-    clarificationMessage = "Udhaar hai ya wapas? Example: 'Sharma ji 500 udhaar'";
+    clarificationMessage = "Udhaar hai ya wapasi? Please confirm karein.";
+  } else if (confidence < CONFIDENCE_THRESHOLD) {
+    needsClarification = true;
+    clarificationMessage = "Samajh nahi aaya. Example: 'Sharma ji 2000 udhaar'";
   }
 
   return {
@@ -239,8 +272,10 @@ function parseHinglishUdhaar(message) {
 module.exports = {
   parseHinglishUdhaar,
   normaliseTranscript,
+  normaliseText,
   calculateConfidence,
   isValidCustomerName,
+  validateParsedForWrite,
   CONFIDENCE_THRESHOLD,
 };
 
@@ -248,6 +283,7 @@ module.exports = {
 if (require.main === module) {
   const testCases = [
     ["Sharma ji 500 udhaar", { customerName: "Sharma Ji", amount: 500, type: "credit" }],
+    ["Sharma ji 2000 udhar", { customerName: "Sharma Ji", amount: 2000, type: "credit" }],
     ["500 ka maal Ramesh ko", { customerName: "Ramesh", amount: 500, type: "credit" }],
     ["Mohan 200 de diye", { customerName: "Mohan", amount: 200, type: "debit" }],
     ["Raju bhai ne 1500 wapas kiya", { customerName: "Raju Bhai", amount: 1500, type: "debit" }],
@@ -261,6 +297,12 @@ if (require.main === module) {
     ["1000 ka saman Radhika ke naam", { customerName: "Radhika", amount: 1000, type: "credit" }],
     ["Diya 1000 udhar", { customerName: "Diya", amount: 1000, type: "credit" }],
     ["paanch sau Mohan udhaar", { customerName: "Mohan", amount: 500, type: "credit" }],
+  ];
+
+  const gateTests = [
+    ["xyz", { ok: false }],
+    ["Mohan udhar", { ok: false, hasAmountMsg: true }],
+    ["2000 udhar", { ok: false, hasNameMsg: true }],
   ];
 
   console.log("┌─────────────────────────────────────────────────────────────┐");
@@ -288,8 +330,25 @@ if (require.main === module) {
         customerName: result.customerName,
         amount: result.amount,
         type: result.type,
-        confidence: result.confidence,
       })}`);
+    }
+  }
+
+  console.log("\n── Validation gate tests ──\n");
+
+  for (const [msg, expected] of gateTests) {
+    const parsed = parseHinglishUdhaar(msg);
+    const gate = validateParsedForWrite(parsed, parsed.type);
+    let ok = gate.ok === expected.ok;
+    if (expected.hasAmountMsg) ok = ok && gate.message.includes("Kitne rupaye");
+    if (expected.hasNameMsg) ok = ok && gate.message.includes("naam");
+
+    if (ok) {
+      passed++;
+      console.log(`✅ GATE PASS: "${msg}"`);
+    } else {
+      failed++;
+      console.log(`❌ GATE FAIL: "${msg}" → ${JSON.stringify(gate)}`);
     }
   }
 

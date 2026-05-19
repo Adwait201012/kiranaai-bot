@@ -212,12 +212,18 @@ async function addEmployee({ ownerPhone, employeePhone, employeeName }) {
 }
 
 async function logUdhaar({ customerName, amount, ownerPhone }) {
+  const roundedAmount = Math.round(Number(amount));
+  if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+    console.error("logUdhaar rejected: invalid amount", amount);
+    return { data: null, error: { message: "Invalid amount" } };
+  }
+
   try {
     const { data, error } = await supabase
       .from("udhaar_logs")
       .insert([{
         customer_name: customerName,
-        amount: Number(amount),
+        amount: roundedAmount,
         owner_phone: ownerPhone,
       }])
       .select()
@@ -236,12 +242,18 @@ async function logUdhaar({ customerName, amount, ownerPhone }) {
 }
 
 async function logWapas({ customerName, amount, ownerPhone }) {
+  const roundedAmount = Math.round(Number(amount));
+  if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+    console.error("logWapas rejected: invalid amount", amount);
+    return { data: null, error: { message: "Invalid amount" } };
+  }
+
   try {
     const { data, error } = await supabase
       .from("udhaar_logs")
       .insert([{
         customer_name: customerName,
-        amount: -Math.abs(Number(amount)),
+        amount: -roundedAmount,
         owner_phone: ownerPhone,
       }])
       .select()
