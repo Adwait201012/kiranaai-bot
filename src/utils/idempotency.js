@@ -89,4 +89,37 @@ async function markAsProcessed(messageId, ownerPhone) {
   }
 }
 
-module.exports = { isAlreadyProcessed, markAsProcessed };
+/**
+ * Reserve a message ID before any business DB write (PUCH step 3).
+ * Returns { reserved: true } on first sight, { reserved: false } if duplicate.
+ *
+ * @param {string} messageId
+ * @param {string} ownerPhone
+ * @returns {Promise<{ reserved: boolean }>}
+ */
+async function reserveMessageId(messageId, ownerPhone) {
+  if (!messageId) return { reserved: true };
+
+  try {
+    const { error } = await supabase.from("processed_messages").insert({
+      message_id: messageId,
+      owner_phone: ownerPhone || "unknown",
+    });
+
+    if (error) {
+      if (error.code === "23505") {
+        return { reserved: false };
+      }
+      console.error("[Idempotency] reserveMessageId failed:", error.message);
+      return { reserved: true };
+    }
+
+    console.log(`[Idempotency] Reserved: ${messageId}`);
+    return { reserved: true };
+  } catch (err) {
+    console.error("[Idempotency] Unexpected error in reserveMessageId:", err.message);
+    return { reserved: true };
+  }
+}
+
+module.exports = { isAlreadyProcessed, markAsProcessed, reserveMessageId };
