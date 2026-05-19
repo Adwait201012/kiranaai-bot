@@ -618,11 +618,11 @@ async function receiveWebhook(req, res) {
           }
 
           await logUdhaar({ customerName, amount, ownerPhone: resolvedOwnerPhone });
+          
+          // Ensure database write is fully committed and queryable
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
           let total = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          if (isVoice) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            total = await getCustomerUdhaarTotal({ customerName, ownerPhone: resolvedOwnerPhone });
-          }
           if (customers.length === 0 && total < amount) {
             total = amount;
           }
