@@ -48,21 +48,21 @@ function formatUdhaarEntry(customerName, amount, type, total = 0) {
   if (isUdhaar) {
     return `Done, ji! ✅
 
-👤 **Grahak:** ${name}
-💸 **Naya Udhaar:** ₹**${amtStr}**
-📌 **Aapka Total Udhaar:** ₹**${totStr}**
+👤 Grahak: ${name}
+💸 Naya Udhaar: ₹${amtStr}
+📌 Aapka Total Udhaar: ₹${totStr}
 
-Kripya hisaab dhyan rakhein! Aapka din accha rahe! 🙏`;
+Hisaab note ho gaya! 📝`;
   } else {
     // Payment received / Wapas
     const suffix = Number(total) <= 0 
-      ? `\n🎉 **Hisaab Saaf Ho Gaya Hai!** ✅` 
-      : `📌 **Remaining Balance:** ₹**${totStr}**`;
+      ? `\n🎉 Hisaab Saaf Ho Gaya Hai! ✅` 
+      : `📌 Remaining Balance: ₹${totStr}`;
 
     return `Payment mil gaya, ji! ✅
 
-👤 **Grahak:** ${name}
-💵 **Wapas Mila:** ₹**${amtStr}**${suffix}
+👤 Grahak: ${name}
+💵 Wapas Mila: ₹${amtStr}${suffix}
 
 Aapki bhalai aur samay par payment ke liye bahut-bahut dhanyawad! 🙏`;
   }
@@ -80,10 +80,10 @@ function formatLowStockAlert(itemName, currentStock, unit = "") {
   const qtyStr = formatAmount(currentStock);
   const unitStr = unit ? ` ${unit.trim()}` : "";
 
-  return `⚠️ **STOCK CRITICAL** ⚠️
+  return `⚠️ STOCK CRITICAL ⚠️
 
-📦 **Item:** ${item}
-📉 **Bacha Stock:** sirf **${qtyStr}${unitStr}**!
+📦 Item: ${item}
+📉 Bacha Stock: sirf ${qtyStr}${unitStr}!
 
 Kripya jaldi se naya stock manga lijiye taaki grahak khali hath na jayein. 🙏`;
 }
@@ -99,12 +99,12 @@ function formatSalesReport(data) {
   const netPending = formatAmount(data.netPending || 0);
   const totalExpenses = formatAmount(data.totalExpenses || 0);
 
-  return `📊 **Aaj Ki Summary Report** 📊
+  return `📊 Aaj Ki Summary Report 📊
 
-• 💸 **Naya Udhaar Diya:** ₹**${newUdhaar}**
-• ✅ **Payment Wapas Mila:** ₹**${wapasReceived}**
-• 📌 **Net Pending Aaj Ka:** ₹**${netPending}**
-• 💰 **Aaj Ka Total Kharcha:** ₹**${totalExpenses}**
+• 💸 Naya Udhaar Diya: ₹${newUdhaar}
+• ✅ Payment Wapas Mila: ₹${wapasReceived}
+• 📌 Net Pending Aaj Ka: ₹${netPending}
+• 💰 Aaj Ka Total Kharcha: ₹${totalExpenses}
 
 Aapka karobaar aise hi badhta rahe! Hum aapke sath hain. 🏪🚀`;
 }
@@ -118,12 +118,12 @@ Aapka karobaar aise hi badhta rahe! Hum aapke sath hain. 🏪🚀`;
 function formatContactSaved(name, phone) {
   const cleanName = capitalizeName(name);
   // Ensure bold phone number
-  const boldPhone = `**${phone}**`;
+  const boldPhone = `${phone}`;
 
   return `Done, ji! ✅
 
-👤 **${cleanName}** ka number humne surakshit save kar liya hai!
-📞 **Contact Phone:** ${boldPhone}
+👤 ${cleanName} ka number humne surakshit save kar liya hai!
+📞 Contact Phone: ${boldPhone}
 
 Ab aap inko aasaani se payment reminders bhej sakte hain. 😊`;
 }
@@ -137,16 +137,16 @@ function formatError(errorMessage) {
   let instruction = "Kripya ek baar check karke dobara koshish karein.";
 
   if (errorMessage.includes("name") || errorMessage.includes("naam")) {
-    instruction = "Kripya grahak ka naam sahi se likhein. Example: **'Sharma ji 500 udhaar'**";
+    instruction = "Kripya grahak ka naam sahi se likhein. Example: 'Sharma ji 500 udhaar'";
   } else if (errorMessage.includes("amount") || errorMessage.includes("paise")) {
-    instruction = "Kripya amount/paise sahi se likhein. Example: **'Sharma ji 500'**";
+    instruction = "Kripya amount/paise sahi se likhein. Example: 'Sharma ji 500'";
   } else if (errorMessage.includes("phone") || errorMessage.includes("number")) {
     instruction = "Kripya 10-digit phone number likhein jo 6, 7, 8, ya 9 se shuru ho.";
   }
 
   return `Maaf kijiye, grahak ji! ❌
 
-kuch gadbad hui hai: *${errorMessage}*
+kuch gadbad hui hai: ${errorMessage}
 
 👉 ${instruction}
 
