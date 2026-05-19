@@ -90,23 +90,27 @@ Kripya jaldi se naya stock manga lijiye taaki grahak khali hath na jayein. 🙏`
 
 /**
  * 3. Daily Sales / Today's Summary Report Formatting
- * 
- * @param {object} data - { newUdhaar, wapasReceived, netPending, totalExpenses }
+ *
+ * @param {object} data - { newUdhaar, wapasReceived, netPending }
  */
 function formatSalesReport(data) {
   const newUdhaar = formatAmount(data.newUdhaar || 0);
   const wapasReceived = formatAmount(data.wapasReceived || 0);
   const netPending = formatAmount(data.netPending || 0);
-  const totalExpenses = formatAmount(data.totalExpenses || 0);
 
   return `📊 Aaj Ki Summary Report 📊
 
 • 💸 Naya Udhaar Diya: ₹${newUdhaar}
 • ✅ Payment Wapas Mila: ₹${wapasReceived}
 • 📌 Net Pending Aaj Ka: ₹${netPending}
-• 💰 Aaj Ka Total Kharcha: ₹${totalExpenses}
 
-Aapka karobaar aise hi badhta rahe! Hum aapke sath hain. 🏪🚀`;
+Aapka karobaar aise hi badhta rahe! 🏪✏️`;
+}
+
+function formatEmptyTodaySummary() {
+  return `📊 Aaj ka koi hisaab nahi mila.
+
+Koi entry add karni ho toh batayein!`;
 }
 
 /**
@@ -157,6 +161,7 @@ module.exports = {
   formatUdhaarEntry,
   formatLowStockAlert,
   formatSalesReport,
+  formatEmptyTodaySummary,
   formatContactSaved,
   formatError,
   formatAmount,

@@ -1,6 +1,7 @@
 const { supabase } = require("../config/supabase");
 const { normalizeItemNameWithGroq } = require("./aiExtractionService");
 const { distance } = require("fastest-levenshtein");
+const { getISTDateRange } = require("../utils/istDate");
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 
 // Words that Groq sometimes incorrectly extracts as a unit — always invalid
@@ -296,61 +297,36 @@ async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
   }
 }
 
-// Helper: Get IST start and end of today as ISO strings (UTC)
-// IST is UTC+5:30.  We compute the IST date, then derive the
-// UTC timestamps that correspond to IST midnight–23:59:59.
-function getISTDayRange() {
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +5:30 in ms
-  const nowUTC = Date.now();
-  const nowIST = new Date(nowUTC + IST_OFFSET_MS);
-
-  // IST date parts
-  const year = nowIST.getUTCFullYear();
-  const month = nowIST.getUTCMonth();
-  const day = nowIST.getUTCDate();
-
-  // IST midnight → subtract offset to get UTC
-  const startOfDayUTC = new Date(Date.UTC(year, month, day) - IST_OFFSET_MS);
-  // IST 23:59:59.999 → subtract offset to get UTC
-  const endOfDayUTC = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - IST_OFFSET_MS);
-
-  return {
-    startISO: startOfDayUTC.toISOString(),
-    endISO: endOfDayUTC.toISOString(),
-  };
-}
-
 async function getTodayHisaab({ ownerPhone }) {
   try {
-    const { startISO, endISO } = getISTDayRange();
+    const { startISO, endISO } = getISTDateRange();
 
-    // Fetch today's udhaar/wapas
+    console.log(`[getTodayHisaab] IST range UTC: ${startISO} → ${endISO} owner=${ownerPhone}`);
+
     const { data: udhaarData, error: udhaarError } = await supabase
       .from("udhaar_logs")
-      .select("amount,created_at")
+      .select("amount, created_at")
       .eq("owner_phone", ownerPhone)
       .gte("created_at", startISO)
       .lte("created_at", endISO);
 
     if (udhaarError) {
-      console.error('Supabase fetch failed:', udhaarError.message);
-      throw new Error('Database error. Try again!');
-    }
-
-    // Fetch today's expenses
-    const { data: expenseData, error: expenseError } = await supabase
-      .from("expenses")
-      .select("amount,created_at")
-      .eq("owner_phone", ownerPhone)
-      .gte("created_at", startISO)
-      .lte("created_at", endISO);
-
-    if (expenseError) {
-      console.error('Supabase fetch failed:', expenseError.message);
-      throw new Error('Database error. Try again!');
+      console.error("Supabase fetch failed (udhaar_logs):", udhaarError.message);
+      return { error: true, message: "❌ Summary fetch nahi hui. Dobara try karein." };
     }
 
     const rows = udhaarData || [];
+
+    if (rows.length === 0) {
+      return {
+        isEmpty: true,
+        entryCount: 0,
+        newUdhaar: 0,
+        wapasReceived: 0,
+        netUdhaar: 0,
+      };
+    }
+
     const newUdhaar = rows
       .filter((row) => Number(row.amount || 0) > 0)
       .reduce((sum, row) => sum + Number(row.amount || 0), 0);
@@ -359,20 +335,18 @@ async function getTodayHisaab({ ownerPhone }) {
       .filter((row) => Number(row.amount || 0) < 0)
       .reduce((sum, row) => sum + Math.abs(Number(row.amount || 0)), 0);
 
-    const totalExpenses = (expenseData || [])
-      .reduce((sum, row) => sum + Number(row.amount || 0), 0);
-
     const netUdhaar = newUdhaar - wapasReceived;
 
     return {
+      isEmpty: false,
+      entryCount: rows.length,
       newUdhaar,
       wapasReceived,
-      totalExpenses,
       netUdhaar,
     };
   } catch (error) {
-    console.error('getTodayHisaab error:', error.message);
-    throw error;
+    console.error("getTodayHisaab error:", error.message);
+    return { error: true, message: "❌ Summary fetch nahi hui. Dobara try karein." };
   }
 }
 
@@ -701,7 +675,7 @@ async function logExpense({ category, amount, description, ownerPhone }) {
 
 async function getTodayExpenses({ ownerPhone }) {
   try {
-    const { startISO, endISO } = getISTDayRange();
+    const { startISO, endISO } = getISTDateRange();
 
     const { data, error } = await supabase
       .from("expenses")

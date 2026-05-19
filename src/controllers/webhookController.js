@@ -53,6 +53,7 @@ const {
   formatUdhaarEntry,
   formatLowStockAlert,
   formatSalesReport,
+  formatEmptyTodaySummary,
   formatContactSaved,
   formatError,
   formatAmount,
@@ -82,8 +83,13 @@ const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const REGISTRATION_TRIGGER_RE =
   /\b(register\s*karo|shop\s*add\s*karo|shuru\s*karo|register|start)\b/i;
 
+/** Empty 200 — never use res.sendStatus(200); Express sends body "OK" to Twilio. */
+function ackWebhook(res) {
+  res.status(200).end();
+}
+
 const verifyWebhook = (req, res) => {
-  res.sendStatus(200);
+  ackWebhook(res);
 };
 
 
@@ -227,7 +233,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Udhaar: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Baaki: ₹{total}",
     LOG_WAPAS: "✅ Payment!\n👤 {name}\n💵 Wapas: ₹{amount}\n📌 Baaki: ₹{remaining}",
-    TODAY_HISAAB: "📊 Aaj ka hisaab\n💸 Naya Udhaar: ₹{newUdhaar}\n✅ Wapas mila: ₹{wapasReceived}\n📌 Net pending aaj: ₹{netPending}\n💰 Kharcha: ₹{totalExpenses}",
+    TODAY_HISAAB: "📊 Aaj ka hisaab\n💸 Naya Udhaar: ₹{newUdhaar}\n✅ Wapas mila: ₹{wapasReceived}\n📌 Net pending aaj: ₹{netPending}",
     SABKA_UDHAAR: "👥 Sabka udhaar:\n{list}\n💰 Total: ₹{total}",
     INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{unit}",
     CHECK_STOCK: "📦 {item}\n📊 Stock: {qty}{unit}",
@@ -257,7 +263,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ Done!\n👤 {name}\n💸 Credit: ₹{amount}\n📌 Total: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 Pending: ₹{total}",
     LOG_WAPAS: "✅ Payment received!\n👤 {name}\n💵 Paid: ₹{amount}\n📌 Remaining: ₹{remaining}",
-    TODAY_HISAAB: "📊 Today's summary\n💸 New Credit: ₹{newUdhaar}\n✅ Received: ₹{wapasReceived}\n📌 Net pending today: ₹{netPending}\n💰 Expenses: ₹{totalExpenses}",
+    TODAY_HISAAB: "📊 Today's summary\n💸 New Credit: ₹{newUdhaar}\n✅ Received: ₹{wapasReceived}\n📌 Net pending today: ₹{netPending}",
     SABKA_UDHAAR: "👥 All credit:\n{list}\n💰 Total: ₹{total}",
     INVENTORY_ADD: "📦 Stock updated!\n🏷️ {item}\n➕ Added: {qty}{unit}\n📊 Total: {total}{totalUnit}",
     CHECK_STOCK: "Stock: {qty}{unit}",
@@ -287,7 +293,7 @@ const TEMPLATES = {
     LOG_UDHAAR: "✅ हो गया!\n👤 {name}\n💸 उधार: ₹{amount}\n📌 कुल: ₹{total}",
     CHECK_UDHAAR: "👤 {name}\n💰 बाकी: ₹{total}",
     LOG_WAPAS: "✅ पेमेंट प्राप्त!\n👤 {name}\n💵 वापस: ₹{amount}\n📌 बाकी: ₹{remaining}",
-    TODAY_HISAAB: "📊 आज का हिसाब\n💸 नया उधार: ₹{newUdhaar}\n✅ वापस मिला: ₹{wapasReceived}\n📌 नेट बाकी आज: ₹{netPending}\n💰 खर्चा: ₹{totalExpenses}",
+    TODAY_HISAAB: "📊 आज का हिसाब\n💸 नया उधार: ₹{newUdhaar}\n✅ वापस मिला: ₹{wapasReceived}\n📌 नेट बाकी आज: ₹{netPending}",
     SABKA_UDHAAR: "👥 सबका उधार:\n{list}\n💰 कुल: ₹{total}",
     INVENTORY_ADD: "📦 स्टॉक अपडेटेड!\n🏷️ {item}\n➕ जोड़ा: {qty}{unit}\n📊 कुल: {total}{unit}",
     CHECK_STOCK: "📦 {item}\n📊 स्टॉक: {qty}{unit}",
@@ -337,7 +343,6 @@ function getTemplate(language, key, params = {}) {
           newUdhaar: params.newUdhaar,
           wapasReceived: params.wapasReceived,
           netPending: params.netPending,
-          totalExpenses: params.totalExpenses
         });
 
       case "SABKA_UDHAAR":
@@ -407,7 +412,7 @@ function getErrorTemplate(language, errorKey) {
 }
 
 function receiveWebhook(req, res) {
-  res.sendStatus(200);
+  ackWebhook(res);
 
   setImmediate(() => {
     processWebhookPayload(req.body).catch((error) => {
@@ -850,19 +855,33 @@ async function processInboundWebhook(inbound) {
           break;
         }
 
-        case "TODAY_HISAAB":
+        case "TODAY_HISAAB": {
           const today = await getTodayHisaab({ ownerPhone: resolvedOwnerPhone });
-          console.log('[TODAY_HISAAB] data:', JSON.stringify(today));
+          console.log("[TODAY_HISAAB] data:", JSON.stringify(today));
+
+          if (today.error) {
+            await sendTextMessage({ to: ownerWaId, text: today.message });
+            break;
+          }
+
+          if (today.isEmpty) {
+            await sendTextMessage({
+              to: ownerWaId,
+              text: formatEmptyTodaySummary(),
+            });
+            break;
+          }
+
           await sendTextMessage({
             to: ownerWaId,
-            text: getTemplate(language, "TODAY_HISAAB", {
-              newUdhaar: formatAmount(today.newUdhaar),
-              wapasReceived: formatAmount(today.wapasReceived),
-              netPending: formatAmount(today.netUdhaar),
-              totalExpenses: formatAmount(today.totalExpenses)
-            })
+            text: formatSalesReport({
+              newUdhaar: today.newUdhaar,
+              wapasReceived: today.wapasReceived,
+              netPending: today.netUdhaar,
+            }),
           });
           break;
+        }
 
         case "SABKA_UDHAAR":
           const result = await getAllPendingUdhaar({ ownerPhone: resolvedOwnerPhone });
