@@ -23,8 +23,15 @@ CREATE TABLE IF NOT EXISTS public.shops (
 
   -- One owner can have only one shop (extend to UNIQUE(owner_phone, shop_name)
   -- if you want multi-shop owners in future).
-  CONSTRAINT shops_owner_phone_unique UNIQUE (owner_phone)
+  CONSTRAINT shops_owner_phone_unique UNIQUE (owner_phone),
+
+  join_code              text,
+  join_code_expires_at   timestamptz
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS shops_join_code_unique
+  ON public.shops (join_code)
+  WHERE join_code IS NOT NULL;
 
 -- ── 2. SHOP EMPLOYEES TABLE ──────────────────────────────────────────────────
 -- Represents every person (owner OR staff) who can interact with the bot
@@ -78,6 +85,21 @@ CREATE TABLE IF NOT EXISTS public.processed_messages (
 -- Index for cleanup queries
 CREATE INDEX IF NOT EXISTS idx_processed_messages_processed_at
   ON public.processed_messages (processed_at);
+
+-- ── 4b. PENDING JOIN REQUESTS ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.pending_join_requests (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  shop_id uuid REFERENCES public.shops(id) ON DELETE CASCADE,
+  employee_phone text NOT NULL,
+  employee_name text,
+  requested_at timestamptz DEFAULT now(),
+  status text DEFAULT 'pending'
+    CHECK (status IN ('pending','approved','rejected')),
+  CONSTRAINT unique_pending UNIQUE (shop_id, employee_phone)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_join_shop_status
+  ON public.pending_join_requests (shop_id, status);
 
 -- ── 5. ROW-LEVEL SECURITY (RLS) ──────────────────────────────────────────────
 -- Enable RLS on all tables so authenticated app users can only see their data.

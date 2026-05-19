@@ -21,7 +21,6 @@ const {
   getTodayExpenses,
   getMonthlyExpenses,
   deleteAllOwnerData,
-  resolveOwnerPhone,
   addEmployee,
   isShopRegistered,
   getShopDetails,
@@ -30,7 +29,14 @@ const {
   createCustomer,
   deductInventoryStock,
 } = require("../services/udhaarService");
+const {
+  getOrCreateJoinCode,
+  requestJoinShop,
+  handleJoinApproval,
+  resolveShopId,
+} = require("../services/shopService");
 const { sendTextMessage: whatsappSend } = require("../services/whatsappService");
+const env = require("../config/env");
 const {
   isAudioMedia,
   transcribeTwilioAudio,
@@ -83,6 +89,24 @@ const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const REGISTRATION_TRIGGER_RE =
   /\b(register\s*karo|shop\s*add\s*karo|shuru\s*karo|register|start)\b/i;
 
+const JOIN_CODE_TRIGGER_RE =
+  /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|employee\s*add|staff\s*add|mera\s*code)\b/i;
+const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})\b/i;
+const APPROVE_RE = /^(?:approve|haan)\s+(\+?\d[\d\s-]{8,14})\b/i;
+const REJECT_RE = /^(?:reject|nahi)\s+(\+?\d[\d\s-]{8,14})\b/i;
+
+function ownerOnly(shopContext, action) {
+  if (!shopContext || shopContext.role !== "owner") {
+    return `Sirf shop owner '${action}' kar sakte hain.`;
+  }
+  return null;
+}
+
+function displayBotNumber() {
+  const raw = String(env.twilioWhatsappFrom || "").replace(/^whatsapp:/i, "");
+  return raw || "[BOT_NUMBER]";
+}
+
 /** Empty 200 — never use res.sendStatus(200); Express sends body "OK" to Twilio. */
 function ackWebhook(res) {
   res.status(200).end();
@@ -105,6 +129,14 @@ function normalizeCustomerPhone(phone) {
     return `+91${digits}`;
   }
   return `+${digits}`;
+}
+
+function toWaSenderId(phone) {
+  const raw = String(phone || "").trim();
+  if (raw.startsWith("whatsapp:")) {
+    return raw;
+  }
+  return `whatsapp:${normalizeCustomerPhone(raw)}`;
 }
 
 function formatUnit(quantity, unit, language) {
@@ -136,10 +168,11 @@ async function persistUdhaarEntry({
   text,
   expectedType,
   ownerWaId,
-  resolvedOwnerPhone,
+  shopContext,
   sendTextMessage,
   insertFn,
 }) {
+  const resolvedOwnerPhone = shopContext.owner_phone;
   const parsed = parseHinglishUdhaar(text);
   const gate = validateParsedForWrite(parsed, expectedType);
 
@@ -178,6 +211,8 @@ async function persistUdhaarEntry({
     customerName,
     amount,
     ownerPhone: resolvedOwnerPhone,
+    shopId: shopContext.id,
+    enteredBy: ownerWaId,
   });
 
   if (insertError) {
@@ -483,7 +518,34 @@ async function processInboundWebhook(inbound) {
 
     text = normaliseTranscript(text);
 
-    const resolvedOwnerPhone = await resolveOwnerPhone(ownerWaId);
+    // ── EMPLOYEE JOIN (no shop context required) ─────────────────
+    const joinMatch = text.match(JOIN_REQUEST_RE);
+    if (joinMatch) {
+      const joinResult = await requestJoinShop(
+        ownerWaId,
+        "Employee",
+        joinMatch[1]
+      );
+      if (joinResult.error) {
+        await sendTextMessage({ to: ownerWaId, text: joinResult.error });
+        return;
+      }
+      await sendTextMessage({
+        to: ownerWaId,
+        text:
+          `Request bhej di! ${joinResult.shopName} ke owner approve karenge toh aap add ho jaayenge.`,
+      });
+      await sendTextMessage({
+        to: joinResult.ownerPhone,
+        text:
+          `👋 Naya Join Request!\n\n` +
+          `👤 Naam: Employee\n` +
+          `📱 Phone: ${ownerWaId}\n\n` +
+          `Approve karne ke liye: 'Approve ${ownerWaId}'\n` +
+          `Reject karne ke liye: 'Reject ${ownerWaId}'`,
+      });
+      return;
+    }
 
     // ── REGISTRATION GATE ─────────────────────────────────────────
     // Step A: If user is mid-registration (we asked for shop name), treat
@@ -530,10 +592,8 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
-    // Step B: Check if this owner_phone is registered at all.
-    //         Employees resolve to their owner's phone, so a registered
-    //         employee will pass this gate automatically.
-    const registered = await isShopRegistered(resolvedOwnerPhone);
+    // Step B: Owners must register before shop context exists.
+    const registered = await isShopRegistered(ownerWaId);
     if (!registered) {
       if (REGISTRATION_TRIGGER_RE.test(text)) {
         // Extract shop name from the same message (Fix 2)
@@ -568,17 +628,111 @@ async function processInboundWebhook(inbound) {
       } else {
         await sendTextMessage({
           to: ownerWaId,
-          text: "Pehle register karo — 'Register karo [aapki shop ka naam]' bhejo.\nExample: Register karo Sharma General Store"
+          text:
+            "Aapka number registered nahi hai.\n" +
+            "Agar aap owner hain: 'Register [dukaan naam]' likhein\n" +
+            "Agar aap employee hain: 'Join [CODE]' likhein",
         });
       }
       return;
     }
     // ── END REGISTRATION GATE ────────────────────────────────────
 
+    const shopContext = await resolveShopId(ownerWaId);
+    if (!shopContext) {
+      await sendTextMessage({
+        to: ownerWaId,
+        text:
+          "Aapka number registered nahi hai.\n" +
+          "Agar aap owner hain: 'Register [dukaan naam]' likhein\n" +
+          "Agar aap employee hain: 'Join [CODE]' likhein",
+      });
+      return;
+    }
+
+    const resolvedOwnerPhone = shopContext.owner_phone;
+
+    // ── JOIN CODE (owner only) ───────────────────────────────────
+    if (JOIN_CODE_TRIGGER_RE.test(text)) {
+      const ownerErr = ownerOnly(shopContext, "join code generate");
+      if (ownerErr) {
+        await sendTextMessage({ to: ownerWaId, text: ownerErr });
+        return;
+      }
+      const codeResult = await getOrCreateJoinCode(ownerWaId);
+      if (codeResult.error) {
+        await sendTextMessage({ to: ownerWaId, text: codeResult.error });
+        return;
+      }
+      const botNum = displayBotNumber();
+      await sendTextMessage({
+        to: ownerWaId,
+        text:
+          `🏪 Aapka Join Code: *${codeResult.code}*\n` +
+          `   ⏰ Valid: ${codeResult.expiresInHours} ghante\n\n` +
+          `   Employee ko yeh message forward karein:\n` +
+          `   ➡️ 'Join ${codeResult.code}' likh kar ${botNum} pe bhejein`,
+      });
+      return;
+    }
+
+    // ── APPROVE / REJECT JOIN (owner only) ───────────────────────
+    const approveMatch = text.match(APPROVE_RE);
+    const rejectMatch = text.match(REJECT_RE);
+    if (approveMatch || rejectMatch) {
+      const ownerErr = ownerOnly(shopContext, "join request approve/reject");
+      if (ownerErr) {
+        await sendTextMessage({ to: ownerWaId, text: ownerErr });
+        return;
+      }
+      const approved = Boolean(approveMatch);
+      const waEmployeePhone = toWaSenderId((approveMatch || rejectMatch)[1]);
+      const approval = await handleJoinApproval(
+        ownerWaId,
+        waEmployeePhone,
+        approved
+      );
+      if (approval.error) {
+        await sendTextMessage({ to: ownerWaId, text: approval.error });
+        return;
+      }
+      if (approved) {
+        await sendTextMessage({
+          to: waEmployeePhone,
+          text:
+            `✅ Welcome to ${approval.shopName}!\n\n` +
+            `   Ab aap is shop ke liye hisaab kar sakte hain.\n` +
+            `   Koi bhi udhaar add karein jaise: 'Sharma 500 udhaar'`,
+        });
+        await sendTextMessage({
+          to: ownerWaId,
+          text: `✅ ${approval.employeeName} ko shop mein add kar diya!`,
+        });
+      } else {
+        await sendTextMessage({
+          to: waEmployeePhone,
+          text:
+            "❌ Aapki join request reject ho gayi.\n   Owner se seedha baat karein.",
+        });
+        await sendTextMessage({
+          to: ownerWaId,
+          text: `❌ ${approval.employeeName} ki join request reject kar di.`,
+        });
+      }
+      return;
+    }
+
     // ── RESET_DATA confirmation check ──────────────────────────────
     // If this user has a pending delete confirmation, check their reply
     // BEFORE running Groq intent detection.
     if (pendingDeleteConfirmation.has(ownerWaId)) {
+      const deleteOwnerErr = ownerOnly(shopContext, "sabka data delete");
+      if (deleteOwnerErr) {
+        pendingDeleteConfirmation.delete(ownerWaId);
+        await sendTextMessage({ to: ownerWaId, text: deleteOwnerErr });
+        return;
+      }
+
       const pending = pendingDeleteConfirmation.get(ownerWaId);
       pendingDeleteConfirmation.delete(ownerWaId); // always clear, one-shot
 
@@ -727,7 +881,7 @@ async function processInboundWebhook(inbound) {
             text,
             expectedType: "credit",
             ownerWaId,
-            resolvedOwnerPhone,
+            shopContext,
             sendTextMessage,
             insertFn: logUdhaar,
           });
@@ -809,7 +963,7 @@ async function processInboundWebhook(inbound) {
             text,
             expectedType: "debit",
             ownerWaId,
-            resolvedOwnerPhone,
+            shopContext,
             sendTextMessage,
             insertFn: logWapas,
           });
@@ -883,7 +1037,12 @@ async function processInboundWebhook(inbound) {
           break;
         }
 
-        case "SABKA_UDHAAR":
+        case "SABKA_UDHAAR": {
+          const sabkaErr = ownerOnly(shopContext, "sabka udhaar dekhna");
+          if (sabkaErr) {
+            await sendTextMessage({ to: ownerWaId, text: sabkaErr });
+            break;
+          }
           const result = await getAllPendingUdhaar({ ownerPhone: resolvedOwnerPhone });
           if (!result.customers.length && (!result.overpaidCustomers || !result.overpaidCustomers.length)) {
             await sendTextMessage({
@@ -920,6 +1079,7 @@ async function processInboundWebhook(inbound) {
             });
           }
           break;
+        }
 
         case "INVENTORY_ADD":
           if (!itemName || !quantity || quantity <= 0) {
@@ -1189,7 +1349,12 @@ async function processInboundWebhook(inbound) {
           }
           break;
 
-        case "RESET_DATA":
+        case "RESET_DATA": {
+          const resetErr = ownerOnly(shopContext, "sabka data delete");
+          if (resetErr) {
+            await sendTextMessage({ to: ownerWaId, text: resetErr });
+            break;
+          }
           // Store pending confirmation — actual deletion happens on next message
           pendingDeleteConfirmation.set(ownerWaId, {
             timestamp: Date.now(),
@@ -1200,9 +1365,18 @@ async function processInboundWebhook(inbound) {
             text: getTemplate(language, "RESET_CONFIRM")
           });
           break;
+        }
 
         case "LAST_ENTRIES": {
-          const entries = await getLastEntries({ ownerPhone: resolvedOwnerPhone, limit: 3, customerName });
+          const lastEntriesOpts = {
+            ownerPhone: resolvedOwnerPhone,
+            limit: 3,
+            customerName,
+          };
+          if (shopContext.role === "employee") {
+            lastEntriesOpts.enteredBy = ownerWaId;
+          }
+          const entries = await getLastEntries(lastEntriesOpts);
           if (!entries.length) {
             await sendTextMessage({ to: ownerWaId, text: "Abhi tak koi entry nahi hai 📋" });
             break;
@@ -1234,13 +1408,11 @@ async function processInboundWebhook(inbound) {
           break;
         }
 
-        case "ADD_EMPLOYEE":
-          if (ownerWaId !== resolvedOwnerPhone) {
-            await sendTextMessage({
-              to: ownerWaId,
-              text: "Aap employee add nahi kar sakte. Sirf dukan ke owner ko permission hai."
-            });
-            return;
+        case "ADD_EMPLOYEE": {
+          const addEmpErr = ownerOnly(shopContext, "employee add");
+          if (addEmpErr) {
+            await sendTextMessage({ to: ownerWaId, text: addEmpErr });
+            break;
           }
           if (!employeeName || !employeePhone) {
             await sendTextMessage({
@@ -1250,10 +1422,10 @@ async function processInboundWebhook(inbound) {
             return;
           }
           try {
-            await addEmployee({ 
-              ownerPhone: resolvedOwnerPhone, 
-              employeePhone: normalizeCustomerPhone(employeePhone), 
-              employeeName 
+            await addEmployee({
+              ownerPhone: resolvedOwnerPhone,
+              employeePhone: toWaSenderId(employeePhone),
+              employeeName,
             });
             await sendTextMessage({
               to: ownerWaId,
@@ -1266,6 +1438,7 @@ async function processInboundWebhook(inbound) {
             });
           }
           break;
+        }
 
         default:
           await sendTextMessage({

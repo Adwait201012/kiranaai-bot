@@ -1,4 +1,5 @@
 const { supabase } = require("../config/supabase");
+const { resolveShopId } = require("./shopService");
 const { normalizeItemNameWithGroq } = require("./aiExtractionService");
 const { distance } = require("fastest-levenshtein");
 const { getISTDateRange } = require("../utils/istDate");
@@ -121,78 +122,86 @@ async function resolveOwnerPhone(senderPhone) {
 
 async function isShopRegistered(ownerPhone) {
   try {
-    const { data, error } = await supabase
-      .from("registered_shops")
-      .select("id")
-      .eq("owner_phone", ownerPhone)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Supabase fetch failed for isShopRegistered:', error.message);
-      return false;
-    }
-    return !!data;
+    const ctx = await resolveShopId(ownerPhone);
+    return !!ctx;
   } catch (error) {
-    console.error('isShopRegistered error:', error.message);
+    console.error("isShopRegistered error:", error.message);
     return false;
   }
 }
 
 async function getShopDetails(ownerPhone) {
   try {
-    const { data, error } = await supabase
-      .from("registered_shops")
-      .select("shop_name")
-      .eq("owner_phone", ownerPhone)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Supabase fetch failed for getShopDetails:', error.message);
-      return null;
-    }
-    return data;
+    const ctx = await resolveShopId(ownerPhone);
+    if (!ctx) return null;
+    return { shop_name: ctx.shop_name };
   } catch (error) {
-    console.error('getShopDetails error:', error.message);
+    console.error("getShopDetails error:", error.message);
     return null;
   }
 }
 
 async function registerShop({ ownerPhone, shopName }) {
   try {
-    // Insert into registered_shops
-    const { error: shopError } = await supabase
-      .from("registered_shops")
-      .insert([{ owner_phone: ownerPhone, shop_name: shopName }]);
+    const { data: shop, error: shopError } = await supabase
+      .from("shops")
+      .insert([{ owner_phone: ownerPhone, shop_name: shopName }])
+      .select("id")
+      .single();
 
     if (shopError) {
-      console.error('Supabase insert failed for registerShop:', shopError.message);
-      if (shopError.code === '23505') {
-        throw new Error('Yeh number pehle se registered hai!');
+      console.error("Supabase insert failed for registerShop:", shopError.message);
+      if (shopError.code === "23505") {
+        throw new Error("Yeh number pehle se registered hai!");
       }
-      throw new Error('Database error. Try again!');
+      throw new Error("Database error. Try again!");
     }
 
-    // Also insert owner as their own employee so resolveOwnerPhone works going forward
-    await supabase.from("shop_employees").upsert(
-      [{ shop_owner_phone: ownerPhone, employee_phone: ownerPhone, employee_name: "Owner" }],
-      { onConflict: "employee_phone" }
+    const { error: empError } = await supabase.from("shop_employees").upsert(
+      [
+        {
+          shop_id: shop.id,
+          shop_owner_phone: ownerPhone,
+          employee_phone: ownerPhone,
+          employee_name: "Owner",
+          is_owner: true,
+        },
+      ],
+      { onConflict: "shop_id,employee_phone" }
     );
+
+    if (empError) {
+      console.error("shop_employees upsert failed for registerShop:", empError.message);
+      throw new Error("Database error. Try again!");
+    }
 
     return true;
   } catch (error) {
-    console.error('registerShop error:', error.message);
+    console.error("registerShop error:", error.message);
     throw error;
   }
 }
 
 async function addEmployee({ ownerPhone, employeePhone, employeeName }) {
   try {
+    const { data: shop, error: shopError } = await supabase
+      .from("shops")
+      .select("id")
+      .eq("owner_phone", ownerPhone)
+      .single();
+
+    if (shopError || !shop) {
+      throw new Error("Pehle shop register karo.");
+    }
+
     const { data, error } = await supabase
       .from("shop_employees")
       .insert([{
+        shop_id: shop.id,
         shop_owner_phone: ownerPhone,
         employee_phone: employeePhone,
-        employee_name: employeeName
+        employee_name: employeeName,
+        is_owner: false,
       }])
       .select()
       .single();
@@ -212,7 +221,7 @@ async function addEmployee({ ownerPhone, employeePhone, employeeName }) {
   }
 }
 
-async function logUdhaar({ customerName, amount, ownerPhone }) {
+async function logUdhaar({ customerName, amount, ownerPhone, shopId, enteredBy }) {
   const roundedAmount = Math.round(Number(amount));
   if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
     console.error("logUdhaar rejected: invalid amount", amount);
@@ -226,6 +235,8 @@ async function logUdhaar({ customerName, amount, ownerPhone }) {
         customer_name: customerName,
         amount: roundedAmount,
         owner_phone: ownerPhone,
+        shop_id: shopId || null,
+        entered_by: enteredBy || ownerPhone,
       }])
       .select()
       .single();
@@ -242,7 +253,7 @@ async function logUdhaar({ customerName, amount, ownerPhone }) {
   }
 }
 
-async function logWapas({ customerName, amount, ownerPhone }) {
+async function logWapas({ customerName, amount, ownerPhone, shopId, enteredBy }) {
   const roundedAmount = Math.round(Number(amount));
   if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
     console.error("logWapas rejected: invalid amount", amount);
@@ -256,6 +267,8 @@ async function logWapas({ customerName, amount, ownerPhone }) {
         customer_name: customerName,
         amount: -roundedAmount,
         owner_phone: ownerPhone,
+        shop_id: shopId || null,
+        entered_by: enteredBy || ownerPhone,
       }])
       .select()
       .single();
@@ -881,13 +894,17 @@ async function getCustomerBalance({ customerName, ownerPhone }) {
   }
 }
 
-async function getLastEntries({ ownerPhone, limit = 3, customerName = null }) {
+async function getLastEntries({ ownerPhone, limit = 3, customerName = null, enteredBy = null }) {
   try {
     let query = supabase
       .from("udhaar_logs")
       .select("customer_name,amount,created_at")
       .eq("owner_phone", ownerPhone)
       .order("created_at", { ascending: false });
+
+    if (enteredBy) {
+      query = query.eq("entered_by", enteredBy);
+    }
 
     if (customerName) {
       // If customerName provided, fetch more to allow for fuzzy filtering locally
@@ -1006,6 +1023,7 @@ module.exports = {
   getCustomerBalance,
   getLastEntries,
   getTodayHisaab,
+  getMonthlyHisaab,
   saveCustomerPhone,
   getCustomerPhone,
   getAllPendingUdhaar,
