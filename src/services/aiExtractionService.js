@@ -109,7 +109,8 @@ CHECK_BALANCE -> CHECK_UDHAAR
 LIST_CUSTOMERS -> SABKA_UDHAAR
 
 (Fallback to these detailed rules for classification):
-Message says Raju ko add karo/employee add karo/helper add karo with name and phone number → ADD_EMPLOYEE (extract employeeName and employeePhone)
+Message starts with "register" followed by a shop name (e.g. Register Sharma General Store, register my shop) → UNKNOWN (shop registration is handled separately; do NOT classify as ADD_EMPLOYEE or LOG_UDHAAR)
+Message says Raju ko add karo/employee add karo/helper add karo with name and phone number → ADD_EMPLOYEE (extract employeeName and employeePhone). NEVER use ADD_EMPLOYEE for "Register [shop name]" messages.
 Message has person name + kitna baaki/ka hisaab/kitna dena hai/udhaar check/baaki batao/baaki hai → CHECK_SINGLE_CUSTOMER_BALANCE (extract customerName only)
 Message says last entry dikhao/last entry/pichli entry/abhi kya likha/last transaction/kya likha abhi/recent entries/pichle transactions → LAST_ENTRIES (extract customerName if provided)
 Message says is mahine ka hisaab/monthly hisaab/is mahine kitna udhaar/mahine ka report/monthly report/is month ka hisaab/poore mahine ka → MONTHLY_SUMMARY

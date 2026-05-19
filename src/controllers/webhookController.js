@@ -47,6 +47,7 @@ const {
   cleanShopName,
   titleCaseShopName,
   parseRegistrationIntent,
+  isRegistrationMessage,
   unknownUserMessage,
 } = require("../utils/shopRegistration");
 const {
@@ -94,8 +95,9 @@ const REGISTRATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const pendingDisambiguation = new Map();
 const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
+// Do not include "employee add" / "staff add" — conflicts with "Register … Store"
 const JOIN_CODE_TRIGGER_RE =
-  /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|employee\s*add|staff\s*add|mera\s*code)\b/i;
+  /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|mera\s*code)\b/i;
 const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})\b/i;
 const APPROVE_RE = /^(?:approve|haan)\s+(\+?\d[\d\s-]{8,14})\b/i;
 const REJECT_RE = /^(?:reject|nahi)\s+(\+?\d[\d\s-]{8,14})\b/i;
@@ -117,12 +119,44 @@ async function runRegistration(ownerWaId, shopName, sendTextMessage) {
     ownerPhone: ownerWaId,
     shopName: titleCaseShopName(cleanShopName(shopName)),
   });
-  if (result.success) {
-    await sendTextMessage({ to: ownerWaId, text: result.message });
-  } else {
-    await sendTextMessage({ to: ownerWaId, text: result.message });
-  }
+  await sendTextMessage({ to: ownerWaId, text: result.message });
   return result.success;
+}
+
+/** Register intent — must run before join / Groq / udhaar handlers */
+async function handleRegistrationIntent(ownerWaId, text, sendTextMessage) {
+  const regIntent = parseRegistrationIntent(text);
+  if (!regIntent) return false;
+
+  if (regIntent.type === "register") {
+    await runRegistration(ownerWaId, regIntent.shopName, sendTextMessage);
+    return true;
+  }
+
+  if (regIntent.type === "prompt") {
+    const registered = await isShopRegistered(ownerWaId);
+    if (registered) {
+      const details = await getShopDetails(ownerWaId);
+      await sendTextMessage({
+        to: ownerWaId,
+        text:
+          `Aapki dukaan already registered hai: *${details?.shop_name || "aapki shop"}*\n` +
+          `Join code ke liye likhein: "Join code do"`,
+      });
+    } else {
+      pendingShopName.set(ownerWaId, { timestamp: Date.now() });
+      await sendTextMessage({
+        to: ownerWaId,
+        text:
+          "Apni shop ka naam kya hai?\n" +
+          "Jaise: Sharma General Store\n" +
+          "(ya ek message mein: Register Sharma General Store)",
+      });
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /** Empty 200 — never use res.sendStatus(200); Express sends body "OK" to Twilio. */
@@ -536,6 +570,37 @@ async function processInboundWebhook(inbound) {
 
     text = normaliseTranscript(text);
 
+    // ── REGISTER (highest priority — before join, udhaar, Groq) ───
+    if (pendingShopName.has(ownerWaId)) {
+      const pending = pendingShopName.get(ownerWaId);
+      pendingShopName.delete(ownerWaId);
+
+      if (Date.now() - pending.timestamp > REGISTRATION_EXPIRY_MS) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text: "Registration timeout ho gayi. Dobara bhejein: Register Sharma General Store",
+        });
+        return;
+      }
+
+      const rawShopName = cleanShopName(text);
+      if (!rawShopName || rawShopName.length < 2) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text:
+            "Shop ka naam nahi mila. Dobara bhejein, jaise: Register Sharma General Store",
+        });
+        return;
+      }
+
+      await runRegistration(ownerWaId, rawShopName, sendTextMessage);
+      return;
+    }
+
+    if (await handleRegistrationIntent(ownerWaId, text, sendTextMessage)) {
+      return;
+    }
+
     // ── EMPLOYEE JOIN (no shop context required) ─────────────────
     const joinMatch = text.match(JOIN_REQUEST_RE);
     if (joinMatch) {
@@ -565,60 +630,15 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
-    // ── REGISTRATION GATE ─────────────────────────────────────────
-    // Step A: If user is mid-registration (we asked for shop name), treat
-    //         their next message as the shop name.
-    if (pendingShopName.has(ownerWaId)) {
-      const pending = pendingShopName.get(ownerWaId);
-      pendingShopName.delete(ownerWaId); // always clear, one-shot
-
-      if (Date.now() - pending.timestamp > REGISTRATION_EXPIRY_MS) {
-        await sendTextMessage({
-          to: ownerWaId,
-          text: "Registration timeout ho gayi. Dobara 'Register karo' bhejo."
-        });
-        return;
-      }
-
-      // Apply title-case to shop name (Fix 3)
-      const rawShopName = cleanShopName(text);
-      if (!rawShopName || rawShopName.length < 2) {
-        await sendTextMessage({
-          to: ownerWaId,
-          text:
-            "Shop ka naam nahi mila. Dobara bhejein, jaise: Register Sharma General Store",
-        });
-        return;
-      }
-
-      await runRegistration(ownerWaId, rawShopName, sendTextMessage);
-      return;
-    }
-
-    // Step B: Owners must register before shop context exists.
+    // ── REGISTRATION GATE (unregistered, non-register message) ───
     const registered = await isShopRegistered(ownerWaId);
     if (!registered) {
-      const regIntent = parseRegistrationIntent(text);
-      if (regIntent?.type === "register") {
-        await runRegistration(ownerWaId, regIntent.shopName, sendTextMessage);
-      } else if (regIntent?.type === "prompt") {
-        pendingShopName.set(ownerWaId, { timestamp: Date.now() });
-        await sendTextMessage({
-          to: ownerWaId,
-          text:
-            "Apni shop ka naam kya hai?\n" +
-            "Jaise: Sharma General Store\n" +
-            "(ya ek message mein: Register Sharma General Store)",
-        });
-      } else {
-        await sendTextMessage({
-          to: ownerWaId,
-          text: unknownUserMessage(),
-        });
-      }
+      await sendTextMessage({
+        to: ownerWaId,
+        text: unknownUserMessage(),
+      });
       return;
     }
-    // ── END REGISTRATION GATE ────────────────────────────────────
 
     const shopContext = await resolveShopId(ownerWaId);
     if (!shopContext) {
@@ -774,6 +794,10 @@ async function processInboundWebhook(inbound) {
 
     // Get intent from Groq first (if not already set by disambiguation)
     if (!aiResult) {
+      if (isRegistrationMessage(text)) {
+        await handleRegistrationIntent(ownerWaId, text, sendTextMessage);
+        return;
+      }
       try {
         aiResult = await detectIntent(text);
       } catch (error) {
@@ -1395,6 +1419,10 @@ async function processInboundWebhook(inbound) {
         }
 
         case "ADD_EMPLOYEE": {
+          if (isRegistrationMessage(text)) {
+            await handleRegistrationIntent(ownerWaId, text, sendTextMessage);
+            break;
+          }
           const addEmpErr = ownerOnly(shopContext, "employee add");
           if (addEmpErr) {
             await sendTextMessage({ to: ownerWaId, text: addEmpErr });

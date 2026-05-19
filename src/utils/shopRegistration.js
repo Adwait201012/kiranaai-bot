@@ -18,12 +18,16 @@ function titleCaseShopName(name) {
     .join(" ");
 }
 
-/** "Register Sharma dukan", "register test shop", "Register [Sharma dukan]" */
+/** Highest priority: "Register Tiwari General Store" → shop name at end */
 const REGISTER_WITH_NAME_RE = /^register\s+(.+)/i;
 
-/** Triggers without inline name → ask for shop name */
+/** "shop register X", "dukaan register X", "naya shop X" */
+const REGISTER_ALT_WITH_NAME_RE =
+  /^(?:shop\s+register|dukaan\s+register|naya\s+shop)\s+(.+)/i;
+
+/** Triggers without inline shop name → ask for name */
 const REGISTER_PROMPT_ONLY_RE =
-  /^(?:meri\s+dukaan?\s+register(?:\s*karo)?|naya\s+register|register\s*karo|shop\s*add\s*karo|shuru\s*karo|register|start)\s*$/i;
+  /^(?:register|shop\s+register|dukaan\s+register|naya\s+shop|meri\s+dukaan?\s+register(?:\s*karo)?|naya\s+register|register\s*karo|shop\s*add\s*karo|shuru\s*karo|start)\s*$/i;
 
 /**
  * @returns {{ type: "register", shopName: string } | { type: "prompt" } | null}
@@ -41,17 +45,24 @@ function parseRegistrationIntent(text) {
     return { type: "prompt" };
   }
 
-  if (REGISTER_PROMPT_ONLY_RE.test(raw)) {
-    const remainder = cleanShopName(
-      raw.replace(REGISTER_PROMPT_ONLY_RE, "").trim()
-    );
-    if (remainder.length >= 2) {
-      return { type: "register", shopName: titleCaseShopName(remainder) };
+  const altWithName = raw.match(REGISTER_ALT_WITH_NAME_RE);
+  if (altWithName) {
+    const shopName = cleanShopName(altWithName[1]);
+    if (shopName.length >= 2) {
+      return { type: "register", shopName: titleCaseShopName(shopName) };
     }
     return { type: "prompt" };
   }
 
+  if (REGISTER_PROMPT_ONLY_RE.test(raw)) {
+    return { type: "prompt" };
+  }
+
   return null;
+}
+
+function isRegistrationMessage(text) {
+  return parseRegistrationIntent(text) !== null;
 }
 
 function unknownUserMessage() {
@@ -68,6 +79,7 @@ module.exports = {
   cleanShopName,
   titleCaseShopName,
   parseRegistrationIntent,
+  isRegistrationMessage,
   unknownUserMessage,
   REGISTER_WITH_NAME_RE,
 };
