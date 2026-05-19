@@ -50,21 +50,21 @@ function formatUdhaarEntry(customerName, amount, type, total = 0) {
 
 👤 Grahak: ${name}
 💸 Naya Udhaar: ₹${amtStr}
-📌 Aapka Total Udhaar: ₹${totStr}
+📍 Aapka Total Udhaar: ₹${totStr}
 
-Hisaab note ho gaya! 📝`;
+Hisaab note ho gaya! 🗒️`;
   } else {
     // Payment received / Wapas
     const suffix = Number(total) <= 0 
       ? `\n🎉 Hisaab Saaf Ho Gaya Hai! ✅` 
-      : `📌 Remaining Balance: ₹${totStr}`;
+      : `\n📍 Aapka Total Udhaar: ₹${totStr}`;
 
-    return `Payment mil gaya, ji! ✅
+    return `Done, ji! ✅
 
 👤 Grahak: ${name}
-💵 Wapas Mila: ₹${amtStr}${suffix}
+💸 Jama: ₹${amtStr}${suffix}
 
-Aapki bhalai aur samay par payment ke liye bahut-bahut dhanyawad! 🙏`;
+Hisaab note ho gaya! 🗒️`;
   }
 }
 
