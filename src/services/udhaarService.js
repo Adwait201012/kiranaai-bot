@@ -152,7 +152,7 @@ async function registerShop({ ownerPhone, shopName }) {
 
   try {
     const { data: existing } = await supabase
-      .from("shops")
+      .from("registered_shops")
       .select("id, shop_name")
       .eq("owner_phone", ownerPhone)
       .maybeSingle();
@@ -168,7 +168,7 @@ async function registerShop({ ownerPhone, shopName }) {
     }
 
     const { data: shop, error: shopError } = await supabase
-      .from("shops")
+      .from("registered_shops")
       .insert({
         owner_phone: ownerPhone,
         shop_name: trimmedName,
@@ -224,7 +224,7 @@ async function registerShop({ ownerPhone, shopName }) {
 async function addEmployee({ ownerPhone, employeePhone, employeeName }) {
   try {
     const { data: shop, error: shopError } = await supabase
-      .from("shops")
+      .from("registered_shops")
       .select("id")
       .eq("owner_phone", ownerPhone)
       .single();

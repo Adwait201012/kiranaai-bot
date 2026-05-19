@@ -11,7 +11,7 @@ function generateJoinCode() {
 
 async function getOrCreateJoinCode(ownerPhone) {
   const { data: shop } = await supabase
-    .from("shops")
+    .from("registered_shops")
     .select("id, join_code, join_code_expires_at, shop_name")
     .eq("owner_phone", ownerPhone)
     .single();
@@ -39,7 +39,7 @@ async function getOrCreateJoinCode(ownerPhone) {
     attempts++;
     if (attempts > 10) return { error: "Code generation failed." };
     const { data: existing } = await supabase
-      .from("shops")
+      .from("registered_shops")
       .select("id")
       .eq("join_code", code)
       .maybeSingle();
@@ -49,7 +49,7 @@ async function getOrCreateJoinCode(ownerPhone) {
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
   const { error: updateError } = await supabase
-    .from("shops")
+    .from("registered_shops")
     .update({
       join_code: code,
       join_code_expires_at: expiresAt.toISOString(),
@@ -71,7 +71,7 @@ async function requestJoinShop(employeePhone, employeeName, joinCode) {
   const upperCode = joinCode.toUpperCase().trim();
 
   const { data: shop } = await supabase
-    .from("shops")
+    .from("registered_shops")
     .select("id, owner_phone, shop_name, join_code_expires_at")
     .eq("join_code", upperCode)
     .single();
@@ -139,7 +139,7 @@ async function requestJoinShop(employeePhone, employeeName, joinCode) {
 
 async function handleJoinApproval(ownerPhone, employeePhone, approved) {
   const { data: shop } = await supabase
-    .from("shops")
+    .from("registered_shops")
     .select("id, shop_name")
     .eq("owner_phone", ownerPhone)
     .single();
@@ -206,7 +206,7 @@ async function ensureOwnerEmployeeRow(shop) {
 
 async function resolveShopId(senderPhone) {
   const { data: ownedShop } = await supabase
-    .from("shops")
+    .from("registered_shops")
     .select("id, shop_name, owner_phone")
     .eq("owner_phone", senderPhone)
     .maybeSingle();
@@ -222,14 +222,14 @@ async function resolveShopId(senderPhone) {
 
   const { data: empRecord } = await supabase
     .from("shop_employees")
-    .select("shop_id, shop_owner_phone, shops(shop_name)")
+    .select("shop_id, shop_owner_phone, registered_shops(shop_name)")
     .eq("employee_phone", senderPhone)
     .maybeSingle();
   if (empRecord) {
     return {
       id: empRecord.shop_id,
       owner_phone: empRecord.shop_owner_phone,
-      shop_name: empRecord.shops?.shop_name,
+      shop_name: empRecord.registered_shops?.shop_name,
       role: "employee",
     };
   }
