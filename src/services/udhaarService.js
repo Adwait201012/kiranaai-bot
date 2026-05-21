@@ -324,6 +324,92 @@ async function logWapas({ customerName, amount, ownerPhone, shopId, enteredBy })
   }
 }
 
+function formatRupee(amount) {
+  return Number(amount || 0).toLocaleString("en-IN");
+}
+
+function buildUdhaarTotalMessage(total) {
+  const rounded = Math.round(Number(total) || 0);
+  if (rounded < 0) {
+    return (
+      `📍 Advance/Overpayment: ₹${formatRupee(Math.abs(rounded))}\n` +
+      `(Grahak ne zyada diya hai)`
+    );
+  }
+  if (rounded === 0) {
+    return `📍 Hisaab barabar! ✅ Koi udhaar nahi.`;
+  }
+  return `📍 Aapka Total Udhaar: ₹${formatRupee(rounded)}`;
+}
+
+function buildUdhaarSuccessReply({ customerName, amount, type, total }) {
+  const totalMessage = buildUdhaarTotalMessage(total);
+  const amountLabel = type === "credit" ? "Naya Udhaar" : "Wapas";
+  return (
+    `Done, ji! ✅\n\n` +
+    `👤 Grahak: ${customerName}\n` +
+    `💸 ${amountLabel}: ₹${formatRupee(amount)}\n` +
+    `${totalMessage}\n\n` +
+    `Hisaab note ho gaya! 🗒️`
+  );
+}
+
+/**
+ * Insert udhaar/wapas and return success reply. Caller must validate before calling.
+ * Order: insert → on failure return error (no success reply) → fetch total → Done ji.
+ */
+async function handleUdhaar({
+  customerName,
+  displayName,
+  amount,
+  type,
+  ownerPhone,
+  shopId,
+  enteredBy,
+  insertFn,
+}) {
+  const { error: insertError } = await insertFn({
+    customerName,
+    amount,
+    ownerPhone,
+    shopId,
+    enteredBy,
+  });
+
+  if (insertError) {
+    console.error("handleUdhaar insert failed:", insertError.message);
+    return {
+      success: false,
+      message: "❌ Hisaab save nahi hua. Dobara try karein.",
+    };
+  }
+
+  let total;
+  try {
+    total = await getCustomerUdhaarTotal({ customerName, ownerPhone });
+  } catch (fetchErr) {
+    console.error("handleUdhaar total fetch failed:", fetchErr.message);
+    return {
+      success: false,
+      saved: true,
+      message:
+        "✅ Entry save hui, lekin total fetch nahi hua. 'Sabka udhaar dikhao' likh kar check karein.",
+    };
+  }
+
+  const nameForReply = displayName || customerName;
+  return {
+    success: true,
+    total,
+    message: buildUdhaarSuccessReply({
+      customerName: nameForReply,
+      amount,
+      type,
+      total,
+    }),
+  };
+}
+
 async function getCustomerUdhaarTotal({ customerName, ownerPhone }) {
   try {
     const canonicalName = String(customerName || "").trim();
@@ -1062,6 +1148,9 @@ async function deductInventoryStock({ itemName, quantity, ownerPhone }) {
 module.exports = {
   logUdhaar,
   logWapas,
+  handleUdhaar,
+  buildUdhaarSuccessReply,
+  buildUdhaarTotalMessage,
   getCustomerUdhaarTotal,
   getCustomerBalance,
   getLastEntries,

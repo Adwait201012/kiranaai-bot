@@ -5,6 +5,7 @@ const {
 const {
   logUdhaar,
   logWapas,
+  handleUdhaar,
   getCustomerUdhaarTotal,
   getCustomerBalance,
   getLastEntries,
@@ -59,10 +60,6 @@ const {
 
 const HISAAB_SAVE_FAILED =
   "❌ Hisaab save nahi hua. Dobara try karein.\nAgar problem rahe toh support se contact karein.";
-const HISAAB_TOTAL_FETCH_FAILED =
-  "✅ Entry save hui, lekin total fetch nahi hua. 'Sabka udhaar dikhao' likh kar check karein.";
-const HISAAB_CALC_WARNING =
-  "⚠️ Kuch calculation mein gadbad lag rahi hai. Please manually check karein.";
 const {
   formatUdhaarEntry,
   formatLowStockAlert,
@@ -382,58 +379,19 @@ async function persistUdhaarEntry({
     return { needsDisambiguation: true, customerName, customers, amount, parsed };
   }
 
-  const { error: insertError } = await insertFn({
+  const display = displayName(customerName);
+  const result = await handleUdhaar({
     customerName,
+    displayName: display,
     amount,
+    type: gate.type,
     ownerPhone: resolvedOwnerPhone,
     shopId: shopContext.id,
     enteredBy: ownerWaId,
+    insertFn,
   });
 
-  if (insertError) {
-    console.error("Udhaar insert failed:", insertError.message);
-    await sendTextMessage({ to: ownerWaId, text: HISAAB_SAVE_FAILED });
-    return;
-  }
-
-  let total;
-  try {
-    total = await getCustomerUdhaarTotal({
-      customerName,
-      ownerPhone: resolvedOwnerPhone,
-    });
-  } catch (fetchErr) {
-    console.error("getCustomerUdhaarTotal failed:", fetchErr.message);
-    await sendTextMessage({ to: ownerWaId, text: HISAAB_TOTAL_FETCH_FAILED });
-    return;
-  }
-
-  if (amount <= 0 || total < 0) {
-    await sendTextMessage({ to: ownerWaId, text: HISAAB_CALC_WARNING });
-    return;
-  }
-
-  const display = displayName(customerName);
-  const safeTotal = Math.max(0, total);
-
-  if (expectedType === "credit") {
-    await sendTextMessage({
-      to: ownerWaId,
-      text: formatUdhaarEntry(display, amount, "credit", safeTotal),
-    });
-  } else {
-    if (safeTotal <= 0) {
-      await sendTextMessage({
-        to: ownerWaId,
-        text: `Done, ji! ✅\n\n👤 Grahak: ${display}\n💸 Jama: ₹${formatAmount(amount)}\n\n🎉 Hisaab Saaf Ho Gaya Hai! ✅`,
-      });
-    } else {
-      await sendTextMessage({
-        to: ownerWaId,
-        text: formatUdhaarEntry(display, amount, "debit", safeTotal),
-      });
-    }
-  }
+  await sendTextMessage({ to: ownerWaId, text: result.message });
 }
 
 // Hardcoded reply templates based on language
