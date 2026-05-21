@@ -7,19 +7,38 @@
 
 const CONFIDENCE_THRESHOLD = 0.85;
 
-const CREDIT_KEYWORDS = [
-  "udhaar", "udhar", "baaki", "credit", "liya", "liye", "le_liya",
-  "le_gaya", "le_gayi", "maal", "samaan", "saman", "nikala",
+/** Flattened via MULTI_WORD_PHRASES — longest / most specific checked first in detectType */
+const CREDIT_PHRASES = [
+  "udhaar_de_diya", "udhar_de_diya",
+  "udhaar_diya", "udhar_diya",
+  "ko_udhaar", "ko_udhar",
+  "ne_udhaar", "ne_udhar",
+  "udhaar_hua", "credit_diya",
+  "ka_maal", "ko_diya", "ne_liya",
+  "udhaar", "udhar", "baaki", "baaki_hai", "credit",
+  "liya", "liye", "le_liya", "le_gaya", "le_gayi",
+  "maal", "samaan", "saman", "nikala",
 ];
 
-const DEBIT_KEYWORDS = [
-  "wapas", "vapas", "de_diya", "de_diye", "de_diya_usne", "mil_gaya",
-  "mila", "mili", "received", "paid", "payment", "return", "returned",
-  "clear", "cleared", "paid_back", "diya", "diye", "kiya",
+const DEBIT_PHRASES = [
+  "de_diya_usne", "paid_back", "mil_gaya", "wapas_kiya",
+  "de_diya", "de_diye", "wapas", "vapas",
+  "mila", "mili", "received", "paid", "payment",
+  "returned", "return", "clear", "cleared", "kiya",
 ];
 
 const MULTI_WORD_PHRASES = [
-  "le gaya", "le gayi", "le liya", "de diya", "de diye", "de diya usne",
+  // Credit (udhaar given / maal liya)
+  "udhaar de diya", "udhar de diya",
+  "udhaar diya", "udhar diya",
+  "ko udhaar", "ko udhar",
+  "ne udhaar", "ne udhar",
+  "udhaar hua", "credit diya",
+  "ka maal", "ko diya", "ne liya",
+  "le gaya", "le gayi", "le liya",
+  "baaki hai",
+  // Debit (payment / wapas)
+  "de diya usne", "de diya", "de diye",
   "mil gaya", "paid back", "wapas kiya",
 ];
 
@@ -34,7 +53,7 @@ const ASR_NAME_FIXES = [
 const NAME_KEYWORD_COLLISIONS = new Set(["diya", "liya", "mila"]);
 
 /** Pre-process raw message before amount/name extraction */
-function normaliseText(text) {
+function normaliseText(text, options = {}) {
   let result = String(text || "")
     .replace(/₹/g, "")
     .replace(/,/g, "")
@@ -58,7 +77,10 @@ function normaliseText(text) {
   // Accidental trailing k: 1000k → 1000
   result = result.replace(/\b(\d{3,})k\b/gi, "$1");
 
-  return flattenMultiWordKeywords(result);
+  if (options.flattenPhrases !== false) {
+    return flattenMultiWordKeywords(result);
+  }
+  return result;
 }
 
 function normaliseTranscript(message) {
@@ -90,13 +112,32 @@ function stripAmount(text) {
 function detectType(lowerText) {
   const firstWord = lowerText.split(/\s+/)[0] || "";
 
-  for (const kw of DEBIT_KEYWORDS) {
-    if (NAME_KEYWORD_COLLISIONS.has(kw) && firstWord === kw) continue;
-    if (lowerText.includes(kw)) return "debit";
+  // Credit phrases first — "udhaar diya" must not lose to bare "diya" debit logic
+  const creditSorted = [...CREDIT_PHRASES].sort((a, b) => b.length - a.length);
+  for (const phrase of creditSorted) {
+    if (NAME_KEYWORD_COLLISIONS.has(phrase) && firstWord === phrase) continue;
+    if (lowerText.includes(phrase)) return "credit";
   }
-  for (const kw of CREDIT_KEYWORDS) {
-    if (lowerText.includes(kw)) return "credit";
+
+  // "ko/ne … diya" without wapas = udhaar diya (credit)
+  if (
+    /\b(ko|ne)_(?:\w+_)*diya\b/.test(lowerText) ||
+    /\b(ko|ne)\s+(?:\w+\s+)*diya\b/.test(lowerText)
+  ) {
+    return "credit";
   }
+
+  // Any udhaar/udhar mention → credit unless explicit wapas/de-diya payment phrase below
+  if (/\b(udhaar|udhar)\b/.test(lowerText)) {
+    return "credit";
+  }
+
+  const debitSorted = [...DEBIT_PHRASES].sort((a, b) => b.length - a.length);
+  for (const phrase of debitSorted) {
+    if (NAME_KEYWORD_COLLISIONS.has(phrase) && firstWord === phrase) continue;
+    if (lowerText.includes(phrase)) return "debit";
+  }
+
   return null;
 }
 
@@ -123,8 +164,8 @@ function titleCaseName(tokens) {
 function buildKeywordSetForNameExtraction(lowerText) {
   const firstWord = lowerText.split(/\s+/)[0] || "";
   const keywordSet = new Set([
-    ...CREDIT_KEYWORDS,
-    ...DEBIT_KEYWORDS,
+    ...CREDIT_PHRASES,
+    ...DEBIT_PHRASES,
     ...MULTI_WORD_PHRASES.map((p) => p.replace(/\s+/g, "_")),
   ].map((k) => k.toLowerCase()));
 
@@ -144,6 +185,9 @@ function extractCustomerName(text) {
     "please", "karo", "karna", "ho", "gaya", "gayi", "gaye",
     "wala", "wale", "wali", "usne", "unhone", "unka", "unke",
     "naam", "maal", "samaan", "saman", "from", "payment",
+    "de", "hua", "diya", "diye", "udhaar", "udhar", "liya", "liye",
+    "wapas", "vapas", "mila", "mili", "kiya", "credit", "received",
+    "paid", "payment", "return", "clear", "cleared",
   ]);
 
   const tokens = stripAmount(text)
@@ -151,9 +195,16 @@ function extractCustomerName(text) {
     .split(/\s+/)
     .filter(Boolean);
 
-  const nameTokens = tokens.filter(
-    (t) => !keywordSet.has(t) && !stopWords.has(t)
-  );
+  const nameTokens = tokens.filter((t, index) => {
+    if (keywordSet.has(t) || stopWords.has(t)) {
+      // Allow customer names that collide with verbs (e.g. "Diya 1000 udhar")
+      if (index === 0 && NAME_KEYWORD_COLLISIONS.has(t)) {
+        return true;
+      }
+      return false;
+    }
+    return true;
+  });
 
   if (!nameTokens.length) return null;
 
@@ -234,12 +285,13 @@ function parseHinglishUdhaar(message) {
   }
 
   const normalized = normaliseText(message);
-  const lower = normalized.toLowerCase();
+  const lowerForName = normaliseText(message, { flattenPhrases: false }).toLowerCase();
+  const lowerForType = flattenMultiWordKeywords(lowerForName);
 
   const rawAmount = extractAmount(normalized);
   const amount = rawAmount != null ? Math.round(Number(rawAmount)) : null;
-  const type = detectType(lower);
-  const customerName = extractCustomerName(lower);
+  const type = detectType(lowerForType);
+  const customerName = extractCustomerName(lowerForName);
   const confidence = calculateConfidence({ customerName, amount, type });
 
   let needsClarification = false;
@@ -291,12 +343,18 @@ if (require.main === module) {
     ["Sharma 300 liya", { customerName: "Sharma", amount: 300, type: "credit" }],
     ["Sunita 1,000 wapas mili", { customerName: "Sunita", amount: 1000, type: "debit" }],
     ["Gupta sahab 2k udhaar", { customerName: "Gupta Sahab", amount: 2000, type: "credit" }],
-    ["Ramesh ko 250 ka samaan diya", { customerName: "Ramesh", amount: 250, type: "debit" }],
+    ["Ramesh ko 250 ka samaan diya", { customerName: "Ramesh", amount: 250, type: "credit" }],
     ["payment received from Mohan 400", { customerName: "Mohan", amount: 400, type: "debit" }],
     ["Sita ne 300 liye", { customerName: "Sita", amount: 300, type: "credit" }],
     ["1000 ka saman Radhika ke naam", { customerName: "Radhika", amount: 1000, type: "credit" }],
     ["Diya 1000 udhar", { customerName: "Diya", amount: 1000, type: "credit" }],
     ["paanch sau Mohan udhaar", { customerName: "Mohan", amount: 500, type: "credit" }],
+    ["Sharma ji ko udhaar diya 300", { customerName: "Sharma Ji", amount: 300, type: "credit" }],
+    ["Sharma ji ne udhaar diya 300", { customerName: "Sharma Ji", amount: 300, type: "credit" }],
+    ["Sharma ji ko 300 udhaar diya", { customerName: "Sharma Ji", amount: 300, type: "credit" }],
+    ["Mohan ne 500 ka maal liya", { customerName: "Mohan", amount: 500, type: "credit" }],
+    ["Raju ko aaj 200 diya", { customerName: "Raju", amount: 200, type: "credit" }],
+    ["Sharma ji 500 udhaar", { customerName: "Sharma Ji", amount: 500, type: "credit" }],
   ];
 
   const gateTests = [
