@@ -25,6 +25,11 @@ async function getOrCreateJoinCode(ownerPhone) {
     const expiresIn = Math.ceil(
       (new Date(shop.join_code_expires_at) - now) / (1000 * 60 * 60)
     );
+    console.log("[getOrCreateJoinCode] reusing code:", shop.join_code, {
+      shop_name: shop.shop_name,
+      owner_phone: ownerPhone,
+      shop_id: shop.id,
+    });
     return {
       code: shop.join_code,
       shopName: shop.shop_name,
@@ -60,6 +65,12 @@ async function getOrCreateJoinCode(ownerPhone) {
     return { error: "Code save nahi hua: " + updateError.message };
   }
 
+  console.log("[getOrCreateJoinCode] new code assigned:", code, {
+    shop_name: shop.shop_name,
+    owner_phone: ownerPhone,
+    shop_id: shop.id,
+  });
+
   return {
     code,
     shopName: shop.shop_name,
@@ -68,18 +79,50 @@ async function getOrCreateJoinCode(ownerPhone) {
 }
 
 async function requestJoinShop(employeePhone, employeeName, joinCode) {
-  const upperCode = joinCode.toUpperCase().trim();
+  const upperCode = String(joinCode || "").toUpperCase().trim();
+  if (!upperCode) {
+    return { error: "Join code invalid hai. Jaise: Join ABC123" };
+  }
 
-  const { data: shop } = await supabase
+  const { data: shop, error: shopError } = await supabase
     .from("registered_shops")
-    .select("id, owner_phone, shop_name, join_code_expires_at")
+    .select("id, owner_phone, shop_name, join_code, join_code_expires_at")
     .eq("join_code", upperCode)
-    .single();
+    .maybeSingle();
 
-  if (!shop) {
+  if (shopError) {
+    console.error(
+      "[requestJoinShop] registered_shops lookup failed:",
+      shopError.message,
+      "code:",
+      upperCode
+    );
     return {
       error:
         "Yeh code galat hai ya expire ho gaya. Owner se naya code maangein.",
+    };
+  }
+
+  if (!shop) {
+    console.log("[requestJoinShop] no shop for join code:", upperCode);
+    return {
+      error:
+        "Yeh code galat hai ya expire ho gaya. Owner se naya code maangein.",
+    };
+  }
+
+  console.log("[requestJoinShop] shop found for join code:", upperCode, {
+    id: shop.id,
+    shop_name: shop.shop_name,
+    owner_phone: shop.owner_phone,
+    join_code: shop.join_code,
+  });
+
+  const shopName = String(shop.shop_name || "").trim();
+  if (!shopName) {
+    console.error("[requestJoinShop] shop_name empty for shop id:", shop.id);
+    return {
+      error: "Shop name DB mein missing hai. Owner se contact karein.",
     };
   }
 
@@ -132,8 +175,9 @@ async function requestJoinShop(employeePhone, employeeName, joinCode) {
 
   return {
     success: true,
-    shopName: shop.shop_name,
+    shopName,
     ownerPhone: shop.owner_phone,
+    shopId: shop.id,
   };
 }
 

@@ -740,7 +740,9 @@ async function processInboundWebhook(inbound) {
       await sendTextMessage({
         to: ownerWaId,
         text:
-          `Request bhej di! ${joinResult.shopName} ke owner approve karenge toh aap add ho jaayenge.`,
+          `✅ Request bhej di!\n\n` +
+          `🏪 Shop: *${joinResult.shopName}*\n` +
+          `Owner approve karenge toh aap add ho jaayenge.`,
       });
       await sendTextMessage({
         to: joinResult.ownerPhone,
