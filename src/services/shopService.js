@@ -137,6 +137,53 @@ async function requestJoinShop(employeePhone, employeeName, joinCode) {
   };
 }
 
+function phoneLast10(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : digits;
+}
+
+async function findPendingJoinRequest(shopId, employeePhone) {
+  const { data: exact } = await supabase
+    .from("pending_join_requests")
+    .select("*")
+    .eq("shop_id", shopId)
+    .eq("employee_phone", employeePhone)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (exact) return exact;
+
+  const target10 = phoneLast10(employeePhone);
+  if (!target10) return null;
+
+  const { data: pending } = await supabase
+    .from("pending_join_requests")
+    .select("*")
+    .eq("shop_id", shopId)
+    .eq("status", "pending");
+
+  return (
+    (pending || []).find(
+      (row) => phoneLast10(row.employee_phone) === target10
+    ) || null
+  );
+}
+
+async function getPendingJoinRequests(shopId) {
+  const { data, error } = await supabase
+    .from("pending_join_requests")
+    .select("employee_name, employee_phone")
+    .eq("shop_id", shopId)
+    .eq("status", "pending")
+    .order("requested_at", { ascending: true });
+
+  if (error) {
+    console.error("getPendingJoinRequests error:", error.message);
+    return { error: error.message };
+  }
+  return { data: data || [] };
+}
+
 async function handleJoinApproval(ownerPhone, employeePhone, approved) {
   const { data: shop } = await supabase
     .from("registered_shops")
@@ -146,21 +193,17 @@ async function handleJoinApproval(ownerPhone, employeePhone, approved) {
 
   if (!shop) return { error: "Shop not found." };
 
-  const { data: request } = await supabase
-    .from("pending_join_requests")
-    .select("*")
-    .eq("shop_id", shop.id)
-    .eq("employee_phone", employeePhone)
-    .eq("status", "pending")
-    .single();
+  const request = await findPendingJoinRequest(shop.id, employeePhone);
 
   if (!request) return { error: "Koi pending request nahi mili." };
+
+  const storedEmployeePhone = request.employee_phone;
 
   if (approved) {
     const { error } = await supabase.from("shop_employees").insert({
       shop_id: shop.id,
       shop_owner_phone: ownerPhone,
-      employee_phone: employeePhone,
+      employee_phone: storedEmployeePhone,
       employee_name: request.employee_name,
       is_owner: false,
     });
@@ -178,6 +221,7 @@ async function handleJoinApproval(ownerPhone, employeePhone, approved) {
     success: true,
     approved,
     employeeName: request.employee_name,
+    employeePhone: storedEmployeePhone,
     shopName: shop.shop_name,
   };
 }
@@ -241,5 +285,6 @@ module.exports = {
   getOrCreateJoinCode,
   requestJoinShop,
   handleJoinApproval,
+  getPendingJoinRequests,
   resolveShopId,
 };

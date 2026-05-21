@@ -33,6 +33,7 @@ const {
   getOrCreateJoinCode,
   requestJoinShop,
   handleJoinApproval,
+  getPendingJoinRequests,
   resolveShopId,
 } = require("../services/shopService");
 const { sendTextMessage: whatsappSend } = require("../services/whatsappService");
@@ -99,8 +100,21 @@ const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const JOIN_CODE_TRIGGER_RE =
   /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|mera\s*code)\b/i;
 const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})\b/i;
-const APPROVE_RE = /^(?:approve|haan)\s+(\+?\d[\d\s-]{8,14})\b/i;
-const REJECT_RE = /^(?:reject|nahi)\s+(\+?\d[\d\s-]{8,14})\b/i;
+const APPROVE_WITH_PHONE_RE = /^(?:approve|haan)\s+(\+?[1-9]\d{9,14})/i;
+const REJECT_WITH_PHONE_RE = /^(?:reject|nahi)\s+(\+?[1-9]\d{9,14})/i;
+
+/** Strip whatsapp: / quotes so approve/reject regex can match phone numbers */
+function normalizeMessage(msg) {
+  return String(msg || "")
+    .trim()
+    .replace(/['"]/g, "")
+    .replace(/whatsapp:\+/gi, "+")
+    .replace(/whatsapp:/gi, "");
+}
+
+function displayPhone(phone) {
+  return String(phone || "").replace(/^whatsapp:/i, "");
+}
 
 function ownerOnly(shopContext, action) {
   if (!shopContext || shopContext.role !== "owner") {
@@ -189,6 +203,115 @@ function toWaSenderId(phone) {
     return raw;
   }
   return `whatsapp:${normalizeCustomerPhone(raw)}`;
+}
+
+function formatJoinRequestOwnerMessage(employeeName, employeePhone) {
+  const cleanPhone = displayPhone(employeePhone);
+  return (
+    `👋 Naya Join Request!\n\n` +
+    `👤 Naam: ${employeeName}\n` +
+    `📱 Phone: ${cleanPhone}\n\n` +
+    `Approve karne ke liye: Approve ${cleanPhone}\n` +
+    `Reject karne ke liye: Reject ${cleanPhone}`
+  );
+}
+
+async function sendPendingJoinRequestsList(ownerWaId, shopContext, sendTextMessage) {
+  const { data, error } = await getPendingJoinRequests(shopContext.id);
+  if (error) {
+    await sendTextMessage({
+      to: ownerWaId,
+      text: "Pending requests fetch nahi hui. Dobara try karein.",
+    });
+    return;
+  }
+  if (!data.length) {
+    await sendTextMessage({
+      to: ownerWaId,
+      text: "Koi pending request nahi hai.",
+    });
+    return;
+  }
+  const list = data
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.employee_name || "Employee"} — ${displayPhone(r.employee_phone)}`
+    )
+    .join("\n");
+  await sendTextMessage({
+    to: ownerWaId,
+    text:
+      `Pending requests:\n\n${list}\n\n` +
+      `Approve karne ke liye:\nApprove [phone number]`,
+  });
+}
+
+/** @returns {boolean} true if message was handled */
+async function handleApproveRejectCommands(
+  ownerWaId,
+  normalizedMsg,
+  shopContext,
+  sendTextMessage
+) {
+  const trimmed = normalizedMsg.trim();
+  const lower = trimmed.toLowerCase();
+
+  const isApproveOnly = lower === "approve";
+  const isRejectOnly = lower === "reject";
+  const approveMatch = trimmed.match(APPROVE_WITH_PHONE_RE);
+  const rejectMatch = trimmed.match(REJECT_WITH_PHONE_RE);
+
+  if (!isApproveOnly && !isRejectOnly && !approveMatch && !rejectMatch) {
+    return false;
+  }
+
+  const ownerErr = ownerOnly(shopContext, "join request approve/reject");
+  if (ownerErr) {
+    await sendTextMessage({ to: ownerWaId, text: ownerErr });
+    return true;
+  }
+
+  if (isApproveOnly || isRejectOnly) {
+    await sendPendingJoinRequestsList(ownerWaId, shopContext, sendTextMessage);
+    return true;
+  }
+
+  const approved = Boolean(approveMatch);
+  const phoneCapture = (approveMatch || rejectMatch)[1];
+  const waEmployeePhone = toWaSenderId(phoneCapture);
+
+  const approval = await handleJoinApproval(ownerWaId, waEmployeePhone, approved);
+  if (approval.error) {
+    await sendTextMessage({ to: ownerWaId, text: approval.error });
+    return true;
+  }
+
+  const notifyPhone = approval.employeePhone || waEmployeePhone;
+
+  if (approved) {
+    await sendTextMessage({
+      to: notifyPhone,
+      text:
+        `✅ Welcome to ${approval.shopName}!\n\n` +
+        `   Ab aap is shop ke liye hisaab kar sakte hain.\n` +
+        `   Koi bhi udhaar add karein jaise: 'Sharma 500 udhaar'`,
+    });
+    await sendTextMessage({
+      to: ownerWaId,
+      text: `✅ ${approval.employeeName} ko shop mein add kar diya!`,
+    });
+  } else {
+    await sendTextMessage({
+      to: notifyPhone,
+      text:
+        "❌ Aapki join request reject ho gayi.\n   Owner se seedha baat karein.",
+    });
+    await sendTextMessage({
+      to: ownerWaId,
+      text: `❌ ${approval.employeeName} ki join request reject kar di.`,
+    });
+  }
+  return true;
 }
 
 function formatUnit(quantity, unit, language) {
@@ -569,6 +692,7 @@ async function processInboundWebhook(inbound) {
     }
 
     text = normaliseTranscript(text);
+    const normalizedMsg = normalizeMessage(text);
 
     // ── REGISTER (highest priority — before join, udhaar, Groq) ───
     if (pendingShopName.has(ownerWaId)) {
@@ -620,12 +744,7 @@ async function processInboundWebhook(inbound) {
       });
       await sendTextMessage({
         to: joinResult.ownerPhone,
-        text:
-          `👋 Naya Join Request!\n\n` +
-          `👤 Naam: Employee\n` +
-          `📱 Phone: ${ownerWaId}\n\n` +
-          `Approve karne ke liye: 'Approve ${ownerWaId}'\n` +
-          `Reject karne ke liye: 'Reject ${ownerWaId}'`,
+        text: formatJoinRequestOwnerMessage("Employee", ownerWaId),
       });
       return;
     }
@@ -675,49 +794,15 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
-    // ── APPROVE / REJECT JOIN (owner only) ───────────────────────
-    const approveMatch = text.match(APPROVE_RE);
-    const rejectMatch = text.match(REJECT_RE);
-    if (approveMatch || rejectMatch) {
-      const ownerErr = ownerOnly(shopContext, "join request approve/reject");
-      if (ownerErr) {
-        await sendTextMessage({ to: ownerWaId, text: ownerErr });
-        return;
-      }
-      const approved = Boolean(approveMatch);
-      const waEmployeePhone = toWaSenderId((approveMatch || rejectMatch)[1]);
-      const approval = await handleJoinApproval(
+    // ── APPROVE / REJECT JOIN (owner only, uses normalizedMsg) ───
+    if (
+      await handleApproveRejectCommands(
         ownerWaId,
-        waEmployeePhone,
-        approved
-      );
-      if (approval.error) {
-        await sendTextMessage({ to: ownerWaId, text: approval.error });
-        return;
-      }
-      if (approved) {
-        await sendTextMessage({
-          to: waEmployeePhone,
-          text:
-            `✅ Welcome to ${approval.shopName}!\n\n` +
-            `   Ab aap is shop ke liye hisaab kar sakte hain.\n` +
-            `   Koi bhi udhaar add karein jaise: 'Sharma 500 udhaar'`,
-        });
-        await sendTextMessage({
-          to: ownerWaId,
-          text: `✅ ${approval.employeeName} ko shop mein add kar diya!`,
-        });
-      } else {
-        await sendTextMessage({
-          to: waEmployeePhone,
-          text:
-            "❌ Aapki join request reject ho gayi.\n   Owner se seedha baat karein.",
-        });
-        await sendTextMessage({
-          to: ownerWaId,
-          text: `❌ ${approval.employeeName} ki join request reject kar di.`,
-        });
-      }
+        normalizedMsg,
+        shopContext,
+        sendTextMessage
+      )
+    ) {
       return;
     }
 
