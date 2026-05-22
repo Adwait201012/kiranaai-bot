@@ -57,6 +57,10 @@ const {
   normaliseTranscript,
   validateParsedForWrite,
 } = require("../../scripts/parseHinglishUdhaar");
+const {
+  sendMorningMessages,
+  sendEveningMessages,
+} = require("../jobs/scheduledMessages");
 
 const HISAAB_SAVE_FAILED =
   "❌ Hisaab save nahi hua. Dobara try karein.\nAgar problem rahe toh support se contact karein.";
@@ -729,6 +733,26 @@ async function processInboundWebhook(inbound) {
     }
 
     const resolvedOwnerPhone = shopContext.owner_phone;
+
+    // ── Scheduled message test triggers (owner only) ─────────────
+    const testCmd = text.trim().toLowerCase();
+    if (testCmd === "test morning" || testCmd === "test evening") {
+      const ownerErr = ownerOnly(shopContext, "scheduled message test");
+      if (ownerErr) {
+        await sendTextMessage({ to: ownerWaId, text: ownerErr });
+        return;
+      }
+      if (testCmd === "test morning") {
+        await sendMorningMessages();
+      } else {
+        await sendEveningMessages();
+      }
+      await sendTextMessage({
+        to: ownerWaId,
+        text: "✅ Test scheduled message bhej diya!",
+      });
+      return;
+    }
 
     // ── JOIN CODE (owner only) ───────────────────────────────────
     if (JOIN_CODE_TRIGGER_RE.test(text)) {
