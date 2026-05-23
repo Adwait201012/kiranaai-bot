@@ -21,7 +21,50 @@ function isAudioMedia(mediaContentType) {
   return type.includes("audio") || type.includes("ogg");
 }
 
-async function transcribeTwilioAudio({ mediaUrl, mediaContentType }) {
+async function transcribeWithNvidia(audioUrl) {
+  // Download audio from Twilio URL with auth
+  const audioResponse = await fetch(audioUrl, {
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${env.twilioAccountSid}:${env.twilioAuthToken}`
+      ).toString('base64')}`
+    }
+  });
+  
+  if (!audioResponse.ok) {
+    throw new Error(`Audio download failed: ${audioResponse.status}`);
+  }
+  
+  const audioBuffer = await audioResponse.arrayBuffer();
+  const base64Audio = Buffer.from(audioBuffer).toString('base64');
+
+  const response = await fetch(
+    'https://integrate.api.nvidia.com/v1/audio/transcriptions',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.nvidiaApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'nvidia/canary-1b-asr',
+        audio: base64Audio,
+        language: 'hi',
+        response_format: 'text'
+      })
+    }
+  );
+
+  const data = await response.json();
+  
+  if (!response.ok) {
+    throw new Error(data.message || 'NVIDIA ASR failed');
+  }
+
+  return data.text || data.transcript || '';
+}
+
+async function transcribeWithGroq({ mediaUrl, mediaContentType }) {
   const ext = getFileExtension(mediaContentType);
   const tempFilePath = path.join(
     os.tmpdir(),
@@ -46,12 +89,30 @@ async function transcribeTwilioAudio({ mediaUrl, mediaContentType }) {
     });
 
     const rawText = String(transcription.text || "").trim();
-    return cleanTranscription(rawText);
+    return rawText;
   } finally {
     if (fs.existsSync(tempFilePath)) {
       fs.unlinkSync(tempFilePath);
     }
   }
+}
+
+// Main export — try NVIDIA first, fall back to Groq
+async function transcribeTwilioAudio({ mediaUrl, mediaContentType }) {
+  if (env.nvidiaApiKey) {
+    try {
+      const transcript = await transcribeWithNvidia(mediaUrl);
+      console.log('[ASR] NVIDIA Canary transcript:', transcript);
+      if (transcript) {
+        return cleanTranscription(transcript);
+      }
+    } catch (err) {
+      console.error('[ASR] NVIDIA failed, trying Groq:', err.message);
+    }
+  }
+  // Fallback to existing Groq transcription
+  const groqTranscript = await transcribeWithGroq({ mediaUrl, mediaContentType });
+  return cleanTranscription(groqTranscript);
 }
 
 function cleanTranscription(text) {

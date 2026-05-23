@@ -28,4 +28,5 @@ module.exports = {
   supabaseUrl: requireEnv("SUPABASE_URL"),
   supabaseKey: requireEnv("SUPABASE_KEY"),
   groqApiKey: requireEnv("GROQ_API_KEY"),
+  nvidiaApiKey: process.env.NVIDIA_API_KEY,
 };
