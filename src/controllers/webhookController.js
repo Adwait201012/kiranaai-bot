@@ -866,7 +866,9 @@ async function processInboundWebhook(inbound) {
       const pending = deleteSessionRow.session_data || {};
       await deleteSession(ownerWaId); // always clear, one-shot
 
-      if (Date.now() - (pending.timestamp || 0) > SESSION_TTL_MS) {
+      // Session TTL check must use created_at < now() - interval '10 minutes'
+      const isExpired = new Date(deleteSessionRow.created_at) < new Date(Date.now() - 10 * 60 * 1000);
+      if (isExpired) {
         await sendTextMessage({
           to: ownerWaId,
           text: getTemplate(pending.language || 'hinglish', 'RESET_CANCEL')

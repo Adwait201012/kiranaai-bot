@@ -287,6 +287,7 @@ async function logUdhaar({ customerName, amount, ownerPhone, shopId, enteredBy }
       .single();
 
     if (error) {
+      console.error("FULL INSERT ERROR:", JSON.stringify(error));
       console.error("Supabase insert failed (logUdhaar):", error.message);
       return { data: null, error };
     }
@@ -1172,24 +1173,27 @@ async function createCustomer({ customerName, phone = null, ownerPhone, shopId =
       row.shop_id = resolvedShopId;
     }
 
-    const conflictKey = resolvedShopId
-      ? "shop_id,normalized_name"
-      : "owner_phone,normalized_name";
-
+    console.log("[createCustomer] Inserting customer:", customerName);
     const { data, error } = await supabase
       .from("customers")
-      .upsert(row, { onConflict: conflictKey, ignoreDuplicates: true })
+      .insert(row)
       .select("id,customer_name,phone_number,normalized_name")
       .maybeSingle();
 
     if (error) {
       if (error.code === "23505") {
-        const { data: existing, error: findError } = await supabase
+        let query = supabase
           .from("customers")
           .select("id,customer_name,phone_number,normalized_name")
-          .eq("owner_phone", ownerPhone)
-          .eq("normalized_name", normalized_name)
-          .maybeSingle();
+          .eq("normalized_name", normalized_name);
+
+        if (resolvedShopId) {
+          query = query.eq("shop_id", resolvedShopId);
+        } else {
+          query = query.eq("owner_phone", ownerPhone);
+        }
+
+        const { data: existing, error: findError } = await query.maybeSingle();
 
         if (findError) {
           console.error("createCustomer fetch after conflict:", findError.message);
@@ -1197,7 +1201,7 @@ async function createCustomer({ customerName, phone = null, ownerPhone, shopId =
         }
         if (existing) return existing;
       }
-      console.error("Supabase upsert failed in createCustomer:", error.message);
+      console.error("Supabase insert failed in createCustomer:", error.message);
       throw new Error("Database error. Try again!");
     }
 
@@ -1205,15 +1209,21 @@ async function createCustomer({ customerName, phone = null, ownerPhone, shopId =
       return data;
     }
 
-    const { data: existing, error: findError } = await supabase
+    let query = supabase
       .from("customers")
       .select("id,customer_name,phone_number,normalized_name")
-      .eq("owner_phone", ownerPhone)
-      .eq("normalized_name", normalized_name)
-      .maybeSingle();
+      .eq("normalized_name", normalized_name);
+
+    if (resolvedShopId) {
+      query = query.eq("shop_id", resolvedShopId);
+    } else {
+      query = query.eq("owner_phone", ownerPhone);
+    }
+
+    const { data: existing, error: findError } = await query.maybeSingle();
 
     if (findError || !existing) {
-      console.error("createCustomer could not resolve row after upsert");
+      console.error("createCustomer could not resolve row after insert");
       throw new Error("Database error. Try again!");
     }
 
