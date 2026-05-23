@@ -12,11 +12,12 @@ const router = express.Router();
 /** Validate X-Twilio-Signature on Twilio deliveries; skip for Meta Cloud API webhooks */
 function twilioWebhookIfPresent(req, res, next) {
   if (req.headers["x-twilio-signature"]) {
-    return twilio.webhook({ validate: true, authToken: env.twilioAuthToken })(
-      req,
-      res,
-      next
-    );
+    return twilio.webhook({
+      validate: true,
+      authToken: env.twilioAuthToken,
+      host: "vyaparai-bot.onrender.com",
+      protocol: "https",
+    })(req, res, next);
   }
   return next();
 }
