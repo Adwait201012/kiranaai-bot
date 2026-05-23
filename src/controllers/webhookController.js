@@ -23,7 +23,6 @@ const {
   getMonthlyExpenses,
   deleteAllOwnerData,
   addEmployee,
-  isShopRegistered,
   getShopDetails,
   registerShop,
   searchCustomersByName,
@@ -61,6 +60,14 @@ const {
   sendMorningMessages,
   sendEveningMessages,
 } = require("../jobs/scheduledMessages");
+const {
+  getSession,
+  setSession,
+  deleteSession,
+  SESSION_TTL_MS,
+} = require("../services/pendingSessionService");
+
+const MAX_UDHAAR = 100000;
 
 const HISAAB_SAVE_FAILED =
   "❌ Hisaab save nahi hua. Dobara try karein.\nAgar problem rahe toh support se contact karein.";
@@ -75,32 +82,18 @@ const {
   capitalizeName
 } = require("../utils/formatMessages");
 
-// In-memory map to track users who have requested data deletion and are pending confirmation.
-// Key: owner WhatsApp ID, Value: { timestamp: Date.now(), language: string }
-// Entries expire after 2 minutes to prevent stale confirmations.
-const pendingDeleteConfirmation = new Map();
 const DELETE_CONFIRM_PHRASES = new Set([
   "HAAN DELETE KARO",
   "HAAN SAB DELETE KARO",
 ]);
-const DELETE_CONFIRM_EXPIRY_MS = 2 * 60 * 1000; // 2 minutes
 
-// In-memory map for two-step shop registration flow.
-// Key: senderPhone (ownerWaId), Value: { timestamp: Date.now() }
-// Once a user sends a registration trigger, we ask for shop name;
-// their NEXT message is treated as the shop name.
-const pendingShopName = new Map();
-const REGISTRATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
-
-// In-memory map for disambiguation sessions.
-// Key: ownerWaId, Value: { timestamp, options: [], pendingAction: { intent, customerName, amount } }
-const pendingDisambiguation = new Map();
-const DISAMBIGUATION_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+// Honorifics used in employee name extraction from join command
+const HONORIFICS = new Set(["ji", "bhai", "ben", "behen", "didi", "sahab", "sir"]);
 
 // Do not include "employee add" / "staff add" — conflicts with "Register … Store"
 const JOIN_CODE_TRIGGER_RE =
   /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|mera\s*code)\b/i;
-const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})\b/i;
+const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})(\s+(.+))?\s*$/i;
 const APPROVE_WITH_PHONE_RE = /^(?:approve|haan)\s+(\+?[1-9]\d{9,14})/i;
 const REJECT_WITH_PHONE_RE = /^(?:reject|nahi)\s+(\+?[1-9]\d{9,14})/i;
 
@@ -149,17 +142,16 @@ async function handleRegistrationIntent(ownerWaId, text, sendTextMessage) {
   }
 
   if (regIntent.type === "prompt") {
-    const registered = await isShopRegistered(ownerWaId);
-    if (registered) {
-      const details = await getShopDetails(ownerWaId);
+    const shopContext = await resolveShopId(ownerWaId);
+    if (shopContext) {
       await sendTextMessage({
         to: ownerWaId,
         text:
-          `Aapki dukaan already registered hai: *${details?.shop_name || "aapki shop"}*\n` +
+          `Aapki dukaan already registered hai: *${shopContext.shop_name || "aapki shop"}*\n` +
           `Join code ke liye likhein: "Join code do"`,
       });
     } else {
-      pendingShopName.set(ownerWaId, { timestamp: Date.now() });
+      await setSession(ownerWaId, "shop_name", { timestamp: Date.now() });
       await sendTextMessage({
         to: ownerWaId,
         text:
@@ -347,9 +339,11 @@ async function persistUdhaarEntry({
   shopContext,
   sendTextMessage,
   insertFn,
+  isVoice = false,
+  skipAmountCheck = false,
 }) {
   const resolvedOwnerPhone = shopContext.owner_phone;
-  const parsed = parseHinglishUdhaar(text);
+  const parsed = parseHinglishUdhaar(text, { isVoice });
   const gate = validateParsedForWrite(parsed, expectedType);
 
   if (!gate.ok) {
@@ -359,6 +353,22 @@ async function persistUdhaarEntry({
 
   let customerName = gate.customerName;
   const amount = gate.amount;
+
+  if (!skipAmountCheck && amount > MAX_UDHAAR) {
+    await setSession(ownerWaId, "amount_confirm", {
+      text,
+      expectedType,
+      amount,
+      isVoice,
+    });
+    await sendTextMessage({
+      to: ownerWaId,
+      text:
+        `⚠️ Amount ₹${formatAmount(amount)} bahut zyada lag raha hai.\n` +
+        `Kya aap confirm karna chahte hain? (Haan/Nahi)`,
+    });
+    return;
+  }
 
   const customers = await searchCustomersByName({
     customerName,
@@ -649,19 +659,24 @@ async function processInboundWebhook(inbound) {
       }
     }
 
-    if (!ownerWaId || !text) {
+    if (!ownerWaId) {
       return;
     }
 
-    text = normaliseTranscript(text);
+    if (!text && !(isAudioMedia(mediaContentType) && mediaUrl)) {
+      return;
+    }
+
+    text = normaliseTranscript(text, { isVoice });
     const normalizedMsg = normalizeMessage(text);
 
     // ── REGISTER (highest priority — before join, udhaar, Groq) ───
-    if (pendingShopName.has(ownerWaId)) {
-      const pending = pendingShopName.get(ownerWaId);
-      pendingShopName.delete(ownerWaId);
+    const shopNameSession = await getSession(ownerWaId);
+    if (shopNameSession?.session_type === "shop_name") {
+      await deleteSession(ownerWaId);
+      const pending = shopNameSession.session_data || {};
 
-      if (Date.now() - pending.timestamp > REGISTRATION_EXPIRY_MS) {
+      if (Date.now() - (pending.timestamp || 0) > SESSION_TTL_MS) {
         await sendTextMessage({
           to: ownerWaId,
           text: "Registration timeout ho gayi. Dobara bhejein: Register Sharma General Store",
@@ -687,13 +702,28 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
-    // ── EMPLOYEE JOIN (no shop context required) ─────────────────
+// ── EMPLOYEE JOIN (no shop context required) ─────────────────
     const joinMatch = text.match(JOIN_REQUEST_RE);
     if (joinMatch) {
+      const joinCode = joinMatch[1];
+      // Extract name from remainder: "Join ABC123 Raju" → name = "Raju"
+      const afterCode = text.slice(text.indexOf(joinCode) + joinCode.length).trim();
+      let employeeName = afterCode || "";
+
+      // If the remainder is empty or just an honorific, no real name given
+      if (!employeeName || employeeName.length < 2 || HONORIFICS.has(employeeName.toLowerCase())) {
+        await sendTextMessage({
+          to: ownerWaId,
+          text:
+            `Aapka naam bhi bhejein. Example: Join ${joinCode} Raju Sharma`,
+        });
+        return;
+      }
+
       const joinResult = await requestJoinShop(
         ownerWaId,
-        "Employee",
-        joinMatch[1]
+        employeeName,
+        joinCode
       );
       if (joinResult.error) {
         await sendTextMessage({ to: ownerWaId, text: joinResult.error });
@@ -708,21 +738,12 @@ async function processInboundWebhook(inbound) {
       });
       await sendTextMessage({
         to: joinResult.ownerPhone,
-        text: formatJoinRequestOwnerMessage("Employee", ownerWaId),
+        text: formatJoinRequestOwnerMessage(employeeName, ownerWaId),
       });
       return;
     }
 
-    // ── REGISTRATION GATE (unregistered, non-register message) ───
-    const registered = await isShopRegistered(ownerWaId);
-    if (!registered) {
-      await sendTextMessage({
-        to: ownerWaId,
-        text: unknownUserMessage(),
-      });
-      return;
-    }
-
+// ── REGISTRATION GATE (unregistered, non-register message) ───
     const shopContext = await resolveShopId(ownerWaId);
     if (!shopContext) {
       await sendTextMessage({
@@ -790,22 +811,60 @@ async function processInboundWebhook(inbound) {
       return;
     }
 
+    // ── Large amount confirmation (before Groq) ───────────────────
+    const amountSession = await getSession(ownerWaId);
+    if (amountSession?.session_type === "amount_confirm") {
+      const pendingAmount = amountSession.session_data || {};
+      const reply = text.trim().toLowerCase();
+
+      if (reply === "haan" || reply === "yes") {
+        await deleteSession(ownerWaId);
+        const insertFn = pendingAmount.expectedType === "debit" ? logWapas : logUdhaar;
+        await persistUdhaarEntry({
+          text: pendingAmount.text,
+          expectedType: pendingAmount.expectedType,
+          ownerWaId,
+          shopContext,
+          sendTextMessage,
+          insertFn,
+          isVoice: !!pendingAmount.isVoice,
+          skipAmountCheck: true,
+        });
+        return;
+      }
+
+      if (reply === "nahi" || reply === "no") {
+        await deleteSession(ownerWaId);
+        await sendTextMessage({
+          to: ownerWaId,
+          text: "Theek hai, entry cancel kar di.",
+        });
+        return;
+      }
+
+      await sendTextMessage({
+        to: ownerWaId,
+        text: "Kya aap confirm karna chahte hain? (Haan/Nahi)",
+      });
+      return;
+    }
+
     // ── RESET_DATA confirmation check ──────────────────────────────
     // If this user has a pending delete confirmation, check their reply
     // BEFORE running Groq intent detection.
-    if (pendingDeleteConfirmation.has(ownerWaId)) {
+    const deleteSessionRow = await getSession(ownerWaId);
+    if (deleteSessionRow?.session_type === "delete_confirmation") {
       const deleteOwnerErr = ownerOnly(shopContext, "sabka data delete");
       if (deleteOwnerErr) {
-        pendingDeleteConfirmation.delete(ownerWaId);
+        await deleteSession(ownerWaId);
         await sendTextMessage({ to: ownerWaId, text: deleteOwnerErr });
         return;
       }
 
-      const pending = pendingDeleteConfirmation.get(ownerWaId);
-      pendingDeleteConfirmation.delete(ownerWaId); // always clear, one-shot
+      const pending = deleteSessionRow.session_data || {};
+      await deleteSession(ownerWaId); // always clear, one-shot
 
-      // Check if confirmation has expired
-      if (Date.now() - pending.timestamp > DELETE_CONFIRM_EXPIRY_MS) {
+      if (Date.now() - (pending.timestamp || 0) > SESSION_TTL_MS) {
         await sendTextMessage({
           to: ownerWaId,
           text: getTemplate(pending.language || 'hinglish', 'RESET_CANCEL')
@@ -847,11 +906,12 @@ async function processInboundWebhook(inbound) {
     let aiResult;
     
     // ── DISAMBIGUATION check ──────────────────────────────
-    if (pendingDisambiguation.has(ownerWaId)) {
-      const session = pendingDisambiguation.get(ownerWaId);
-      pendingDisambiguation.delete(ownerWaId); // clear it
-      
-      if (Date.now() - session.timestamp <= DISAMBIGUATION_EXPIRY_MS) {
+    const disambigSession = await getSession(ownerWaId);
+    if (disambigSession?.session_type === "disambiguation") {
+      const session = disambigSession.session_data || {};
+      await deleteSession(ownerWaId);
+
+      if (Date.now() - (session.timestamp || 0) <= SESSION_TTL_MS) {
         const choice = parseInt(text.trim(), 10);
         if (!isNaN(choice) && choice >= 1 && choice <= session.options.length) {
           const chosenCustomer = session.options[choice - 1];
@@ -893,10 +953,7 @@ async function processInboundWebhook(inbound) {
       language = "hinglish"
     } = aiResult;
 
-    // Fallback logic for greetings
-    if (intent === "UNKNOWN" && text.trim().split(/\s+/).length < 4) {
-      intent = "GREETING";
-    }
+// GREETING handled by AI; no more word-count override
 
     // Handle different intents
     try {
@@ -928,10 +985,10 @@ async function processInboundWebhook(inbound) {
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
-            pendingDisambiguation.set(ownerWaId, {
+            await setSession(ownerWaId, "disambiguation", {
               timestamp: Date.now(),
               options: customers,
-              pendingAction: aiResult
+              pendingAction: aiResult,
             });
             const optionsText = customers.map((c, i) => `${i + 1}. ${c.customer_name}`).join("\n");
             await sendTextMessage({
@@ -963,9 +1020,10 @@ async function processInboundWebhook(inbound) {
             shopContext,
             sendTextMessage,
             insertFn: logUdhaar,
+            isVoice,
           });
           if (udhaarResult?.needsDisambiguation) {
-            pendingDisambiguation.set(ownerWaId, {
+            await setSession(ownerWaId, "disambiguation", {
               timestamp: Date.now(),
               options: udhaarResult.customers.slice(0, 3),
               pendingAction: {
@@ -1006,10 +1064,10 @@ async function processInboundWebhook(inbound) {
           } else if (customers.length === 1) {
             customerName = customers[0].customer_name;
           } else {
-            pendingDisambiguation.set(ownerWaId, {
+            await setSession(ownerWaId, "disambiguation", {
               timestamp: Date.now(),
               options: customers,
-              pendingAction: aiResult
+              pendingAction: aiResult,
             });
             const optionsText = customers.map((c, i) => `${i + 1}. ${c.customer_name}`).join("\n");
             await sendTextMessage({
@@ -1045,9 +1103,10 @@ async function processInboundWebhook(inbound) {
             shopContext,
             sendTextMessage,
             insertFn: logWapas,
+            isVoice,
           });
           if (wapasResult?.needsDisambiguation) {
-            pendingDisambiguation.set(ownerWaId, {
+            await setSession(ownerWaId, "disambiguation", {
               timestamp: Date.now(),
               options: wapasResult.customers.slice(0, 3),
               pendingAction: {
@@ -1435,9 +1494,9 @@ async function processInboundWebhook(inbound) {
             break;
           }
           // Store pending confirmation — actual deletion happens on next message
-          pendingDeleteConfirmation.set(ownerWaId, {
+          await setSession(ownerWaId, "delete_confirmation", {
             timestamp: Date.now(),
-            language
+            language,
           });
           await sendTextMessage({
             to: ownerWaId,

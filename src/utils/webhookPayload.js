@@ -38,26 +38,32 @@ function parseInboundWebhook(body) {
       return null;
     }
 
-    // Voice notes arrive as a separate webhook with a different wamid — skip them.
-    if (message.type === "audio") {
-      return null;
-    }
-
-    // Only handle plain text inbound messages (avoids double-processing with audio).
-    if (message.type !== "text") {
-      return null;
-    }
-
     const ownerWaId = normalizeWaId(message.from);
     let text = "";
     let mediaContentType = null;
     let mediaUrl = null;
 
-    if (message.text?.body) {
+    // Handle audio messages — pass through for transcription
+    if (message.type === "audio") {
+      const audio = message.audio || {};
+      mediaContentType = audio.mime_type || "audio/ogg";
+      mediaUrl = audio.id
+        ? `https://graph.facebook.com/v18.0/${audio.id}`
+        : null;
+    } else if (message.type === "voice") {
+      const voice = message.voice || {};
+      mediaContentType = voice.mime_type || "audio/ogg";
+      mediaUrl = voice.id
+        ? `https://graph.facebook.com/v18.0/${voice.id}`
+        : null;
+    } else if (message.type === "text" && message.text?.body) {
       text = String(message.text.body).trim();
+    } else {
+      // Unsupported message type (image, document, etc.) — ignore silently
+      return null;
     }
 
-    if (!text) {
+    if (!text && !mediaUrl) {
       return null;
     }
 
@@ -84,8 +90,18 @@ function parseInboundWebhook(body) {
     }
 
     const mediaType = String(body.MediaContentType0 || "").toLowerCase();
+    const mediaUrl = body.MediaUrl0 || null;
+
+    // Audio messages — pass through with media metadata for transcription
     if (mediaType.includes("audio")) {
-      return null;
+      return {
+        messageId,
+        ownerWaId: normalizeWaId(body.From),
+        text: "",
+        mediaContentType: body.MediaContentType0 || null,
+        mediaUrl,
+        source: "twilio",
+      };
     }
 
     return {
@@ -93,7 +109,7 @@ function parseInboundWebhook(body) {
       ownerWaId: normalizeWaId(body.From),
       text: String(body.Body || "").trim(),
       mediaContentType: body.MediaContentType0 || null,
-      mediaUrl: body.MediaUrl0 || null,
+      mediaUrl,
       source: "twilio",
     };
   }

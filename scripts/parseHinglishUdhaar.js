@@ -70,8 +70,11 @@ function normaliseText(text, options = {}) {
     .replace(/\s+/g, " ")
     .trim();
 
-  for (const [pattern, replacement] of ASR_NAME_FIXES) {
-    result = result.replace(pattern, replacement);
+  // ASR name fixes — only apply to voice transcriptions to avoid corrupting legitimate names
+  if (options.isVoice) {
+    for (const [pattern, replacement] of ASR_NAME_FIXES) {
+      result = result.replace(pattern, replacement);
+    }
   }
 
   // Accidental trailing k: 1000k → 1000
@@ -83,8 +86,8 @@ function normaliseText(text, options = {}) {
   return result;
 }
 
-function normaliseTranscript(message) {
-  return normaliseText(message);
+function normaliseTranscript(message, options = {}) {
+  return normaliseText(message, options);
 }
 
 function flattenMultiWordKeywords(text) {
@@ -270,7 +273,7 @@ function validateParsedForWrite(parsed, expectedType) {
   };
 }
 
-function parseHinglishUdhaar(message) {
+function parseHinglishUdhaar(message, options = {}) {
   const empty = {
     customerName: null,
     amount: null,
@@ -284,8 +287,9 @@ function parseHinglishUdhaar(message) {
     return { ...empty, needsClarification: false };
   }
 
-  const normalized = normaliseText(message);
-  const lowerForName = normaliseText(message, { flattenPhrases: false }).toLowerCase();
+  const normaliseOpts = { ...options, flattenPhrases: true };
+  const normalized = normaliseText(message, normaliseOpts);
+  const lowerForName = normaliseText(message, { ...options, flattenPhrases: false }).toLowerCase();
   const lowerForType = flattenMultiWordKeywords(lowerForName);
 
   const rawAmount = extractAmount(normalized);
