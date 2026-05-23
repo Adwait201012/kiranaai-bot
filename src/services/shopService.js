@@ -78,11 +78,42 @@ async function getOrCreateJoinCode(ownerPhone) {
   };
 }
 
+async function countRecentJoinAttempts(employeePhone) {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count, error } = await supabase
+    .from("join_attempts")
+    .select("*", { count: "exact", head: true })
+    .eq("phone", employeePhone)
+    .gte("attempted_at", oneHourAgo);
+
+  if (error) {
+    console.error("[requestJoinShop] join_attempts count failed:", error.message);
+    return 0;
+  }
+  return count || 0;
+}
+
+async function logJoinAttempt(employeePhone) {
+  const { error } = await supabase.from("join_attempts").insert({
+    phone: employeePhone,
+  });
+  if (error) {
+    console.error("[requestJoinShop] join_attempts insert failed:", error.message);
+  }
+}
+
 async function requestJoinShop(employeePhone, employeeName, joinCode) {
   const upperCode = String(joinCode || "").toUpperCase().trim();
   if (!upperCode) {
     return { error: "Join code invalid hai. Jaise: Join ABC123" };
   }
+
+  const recentAttempts = await countRecentJoinAttempts(employeePhone);
+  if (recentAttempts >= 5) {
+    return { error: "Bahut zyada tries. 1 ghante baad try karein." };
+  }
+
+  await logJoinAttempt(employeePhone);
 
   const { data: shop, error: shopError } = await supabase
     .from("registered_shops")
@@ -186,13 +217,12 @@ function phoneLast10(phone) {
   return digits.length >= 10 ? digits.slice(-10) : digits;
 }
 
-async function findPendingJoinRequest(shopId, employeePhone) {
+async function findJoinRequest(shopId, employeePhone) {
   const { data: exact } = await supabase
     .from("pending_join_requests")
     .select("*")
     .eq("shop_id", shopId)
     .eq("employee_phone", employeePhone)
-    .eq("status", "pending")
     .maybeSingle();
 
   if (exact) return exact;
@@ -200,17 +230,23 @@ async function findPendingJoinRequest(shopId, employeePhone) {
   const target10 = phoneLast10(employeePhone);
   if (!target10) return null;
 
-  const { data: pending } = await supabase
+  const { data: rows } = await supabase
     .from("pending_join_requests")
     .select("*")
-    .eq("shop_id", shopId)
-    .eq("status", "pending");
+    .eq("shop_id", shopId);
 
   return (
-    (pending || []).find(
-      (row) => phoneLast10(row.employee_phone) === target10
-    ) || null
+    (rows || []).find((row) => phoneLast10(row.employee_phone) === target10) ||
+    null
   );
+}
+
+async function findPendingJoinRequest(shopId, employeePhone) {
+  const request = await findJoinRequest(shopId, employeePhone);
+  if (request?.status === "pending") {
+    return request;
+  }
+  return null;
 }
 
 async function getPendingJoinRequests(shopId) {
@@ -237,21 +273,37 @@ async function handleJoinApproval(ownerPhone, employeePhone, approved) {
 
   if (!shop) return { error: "Shop not found." };
 
-  const request = await findPendingJoinRequest(shop.id, employeePhone);
+  const request = await findJoinRequest(shop.id, employeePhone);
 
-  if (!request) return { error: "Koi pending request nahi mili." };
+  if (!request) {
+    return { error: "Koi pending request nahi mili." };
+  }
+  if (request.status === "approved") {
+    return { error: "Yeh employee pehle se approved hai." };
+  }
+  if (request.status === "rejected") {
+    return { error: "Yeh request pehle reject ho chuki hai." };
+  }
+  if (request.status !== "pending") {
+    return { error: "Koi pending request nahi mili." };
+  }
 
   const storedEmployeePhone = request.employee_phone;
 
   if (approved) {
-    const { error } = await supabase.from("shop_employees").insert({
-      shop_id: shop.id,
-      shop_owner_phone: ownerPhone,
-      employee_phone: storedEmployeePhone,
-      employee_name: request.employee_name,
-      is_owner: false,
-    });
-    if (error) return { error: "Employee add nahi hua: " + error.message };
+    const { error } = await supabase.from("shop_employees").upsert(
+      {
+        shop_id: shop.id,
+        shop_owner_phone: ownerPhone,
+        employee_phone: storedEmployeePhone,
+        employee_name: request.employee_name,
+        is_owner: false,
+      },
+      { onConflict: "shop_id,employee_phone", ignoreDuplicates: true }
+    );
+    if (error) {
+      return { error: "Employee add nahi hua: " + error.message };
+    }
   }
 
   await supabase

@@ -43,6 +43,7 @@ const {
   transcribeTwilioAudio,
 } = require("../services/audioTranscriptionService");
 const { tryClaimMessage } = require("../utils/idempotency");
+const { IST_OFFSET_MS } = require("../utils/istDate");
 const { parseInboundWebhook } = require("../utils/webhookPayload");
 const {
   cleanShopName,
@@ -380,6 +381,7 @@ async function persistUdhaarEntry({
       const newCust = await createCustomer({
         customerName,
         ownerPhone: resolvedOwnerPhone,
+        shopId: shopContext.id,
       });
       customerName = newCust.customer_name;
     } catch (createErr) {
@@ -923,10 +925,6 @@ async function processInboundWebhook(inbound) {
 
     // Get intent from Groq first (if not already set by disambiguation)
     if (!aiResult) {
-      if (isRegistrationMessage(text)) {
-        await handleRegistrationIntent(ownerWaId, text, sendTextMessage);
-        return;
-      }
       try {
         aiResult = await detectIntent(text);
       } catch (error) {
@@ -1519,8 +1517,6 @@ async function processInboundWebhook(inbound) {
             await sendTextMessage({ to: ownerWaId, text: "Abhi tak koi entry nahi hai 📋" });
             break;
           }
-          const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
           const lines = entries.map((entry, i) => {
             const createdMs = /^\d+$/.test(String(entry.created_at || ""))
               ? parseInt(entry.created_at, 10) * 1000

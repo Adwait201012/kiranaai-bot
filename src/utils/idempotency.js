@@ -3,8 +3,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * Prevents duplicate processing of WhatsApp webhook messages.
  *
- * Use tryClaimMessage() once at the start of the handler (atomic INSERT).
- * If the row already exists, ignoreDuplicates returns no rows → duplicate delivery.
+ * Uses INSERT with unique message_id — concurrent duplicates get 23505 and skip.
  *
  * Requires the `processed_messages` table (see shop_employees.sql):
  *   CREATE TABLE processed_messages (
@@ -20,7 +19,7 @@
 const { supabase } = require("../config/supabase");
 
 /**
- * Atomically claim a wamid before processing. Safe under concurrent deliveries.
+ * Atomically claim a message id before processing.
  *
  * @param {string} messageId
  * @param {string} ownerPhone
@@ -34,27 +33,24 @@ async function tryClaimMessage(messageId, ownerPhone) {
   try {
     const { data, error } = await supabase
       .from("processed_messages")
-      .upsert(
-        {
-          message_id: messageId,
-          owner_phone: ownerPhone || "unknown",
-        },
-        { onConflict: "message_id", ignoreDuplicates: true }
-      )
+      .insert({
+        message_id: messageId,
+        owner_phone: ownerPhone || "unknown",
+      })
       .select("message_id");
 
-    if (error) {
-      console.error("[Idempotency] tryClaimMessage failed:", error.message);
+    if (!error) {
+      console.log(`[Idempotency] Claimed wamid: ${messageId}`);
       return { claimed: true };
     }
 
-    const claimed = Array.isArray(data) && data.length > 0;
-    if (claimed) {
-      console.log(`[Idempotency] Claimed wamid: ${messageId}`);
-    } else {
+    if (error.code === "23505") {
       console.log(`[Idempotency] Duplicate wamid (not claimed): ${messageId}`);
+      return { claimed: false };
     }
-    return { claimed };
+
+    console.error("[Idempotency] tryClaimMessage failed:", error.message);
+    return { claimed: true };
   } catch (err) {
     console.error("[Idempotency] Unexpected error in tryClaimMessage:", err.message);
     return { claimed: true };

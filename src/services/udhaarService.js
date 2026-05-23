@@ -63,7 +63,7 @@ function normalizeCustomerName(customerName) {
   return name
     .toLowerCase()
     // Rule 1: Remove honorifics (added 'g' as requested)
-    .replace(/\b(ji|bhai|ben|behen|didi|sahab|sir|mr|mrs|ms|shree|g)\b/gi, " ")
+    .replace(/\b(ji|bhai|ben|behen|didi|sahab|sir|madam|mr|mrs|ms|shree|g)\b/gi, " ")
     // Rule 1: Remove extra symbols but keep letters/numbers
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     // Rule 1: Remove extra spaces and trim
@@ -151,30 +151,17 @@ async function registerShop({ ownerPhone, shopName }) {
   }
 
   try {
-    const { data: existing } = await supabase
-      .from("registered_shops")
-      .select("id, shop_name")
-      .eq("owner_phone", ownerPhone)
-      .maybeSingle();
-
-    if (existing) {
-      return {
-        success: false,
-        message:
-          `Aapki dukaan already registered hai: *${existing.shop_name}*\n` +
-          `Join code ke liye likhein: "Join code do"`,
-        shopName: existing.shop_name,
-      };
-    }
-
     const { data: shop, error: shopError } = await supabase
       .from("registered_shops")
-      .insert({
-        owner_phone: ownerPhone,
-        shop_name: trimmedName,
-      })
-      .select()
-      .single();
+      .upsert(
+        {
+          owner_phone: ownerPhone,
+          shop_name: trimmedName,
+        },
+        { onConflict: "owner_phone", ignoreDuplicates: true }
+      )
+      .select("id, shop_name")
+      .maybeSingle();
 
     if (shopError) {
       console.error("Shop insert error:", shopError.code, shopError.message, shopError.details);
@@ -191,13 +178,32 @@ async function registerShop({ ownerPhone, shopName }) {
       };
     }
 
-    const { error: empError } = await supabase.from("shop_employees").insert({
-      shop_id: shop.id,
-      shop_owner_phone: ownerPhone,
-      employee_phone: ownerPhone,
-      employee_name: "Owner",
-      is_owner: true,
-    });
+    if (!shop) {
+      const { data: existing } = await supabase
+        .from("registered_shops")
+        .select("id, shop_name")
+        .eq("owner_phone", ownerPhone)
+        .maybeSingle();
+
+      return {
+        success: false,
+        message:
+          `Aapki dukaan already registered hai: *${existing?.shop_name || "aapki shop"}*\n` +
+          `Join code ke liye likhein: "Join code do"`,
+        shopName: existing?.shop_name,
+      };
+    }
+
+    const { error: empError } = await supabase.from("shop_employees").upsert(
+      {
+        shop_id: shop.id,
+        shop_owner_phone: ownerPhone,
+        employee_phone: ownerPhone,
+        employee_name: "Owner",
+        is_owner: true,
+      },
+      { onConflict: "shop_id,employee_phone", ignoreDuplicates: true }
+    );
 
     if (empError) {
       console.error("Employee insert error:", empError.code, empError.message);
@@ -562,56 +568,87 @@ async function getCustomerPhone({ customerName, ownerPhone }) {
   }
 }
 
+function mergePendingRowsByNormalizedName(rows) {
+  const totalsMap = new Map();
+  const originalNameMap = new Map();
+
+  for (const row of rows || []) {
+    const originalName = String(row.customer_name || "").trim();
+    if (!originalName || originalName.length <= 2) {
+      continue;
+    }
+
+    const normalizedName = normalizeCustomerName(originalName);
+    const amount = Number(row.total_balance ?? row.amount ?? 0);
+
+    const current = totalsMap.get(normalizedName) || 0;
+    totalsMap.set(normalizedName, current + amount);
+
+    if (!originalNameMap.has(normalizedName)) {
+      originalNameMap.set(normalizedName, originalName);
+    }
+  }
+
+  const allCustomers = Array.from(totalsMap.entries())
+    .map(([normalizedName, total]) => ({
+      customerName: originalNameMap.get(normalizedName) || normalizedName,
+      total,
+    }))
+    .filter((item) => item.total !== 0);
+
+  const customers = allCustomers
+    .filter((c) => c.total > 0)
+    .sort((a, b) => b.total - a.total);
+  const overpaidCustomers = allCustomers
+    .filter((c) => c.total < 0)
+    .sort((a, b) => a.total - b.total);
+  const grandTotal = customers.reduce((sum, item) => sum + item.total, 0);
+
+  return { customers, overpaidCustomers, grandTotal };
+}
+
 async function getAllPendingUdhaar({ ownerPhone }) {
   try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc(
+      "get_pending_udhaar_summary",
+      { p_owner_phone: ownerPhone }
+    );
+
+    if (!rpcError && Array.isArray(rpcData)) {
+      return mergePendingRowsByNormalizedName(rpcData);
+    }
+
+    if (rpcError) {
+      console.error(
+        "get_pending_udhaar_summary RPC failed, falling back:",
+        rpcError.message
+      );
+    }
+
     const { data, error } = await supabase
       .from("udhaar_logs")
-      .select("customer_name,amount,created_at")
-      .eq("owner_phone", ownerPhone)
-      .order("created_at", { ascending: false });
+      .select("customer_name,amount")
+      .eq("owner_phone", ownerPhone);
 
     if (error) {
-      console.error('Supabase fetch failed:', error.message);
-      throw new Error('Database error. Try again!');
+      console.error("Supabase fetch failed:", error.message);
+      throw new Error("Database error. Try again!");
     }
 
-    const totalsMap = new Map();
-    const originalNameMap = new Map();
-    
+    const grouped = new Map();
     for (const row of data || []) {
-      const originalName = String(row.customer_name || "").trim();
-      if (!originalName || originalName.length <= 2) {
-        continue;
-      }
-      
-      const normalizedName = normalizeCustomerName(originalName);
-      const amount = Number(row.amount || 0);
-      
-      // Group by normalized name but keep track of original names
-      const current = totalsMap.get(normalizedName) || 0;
-      totalsMap.set(normalizedName, current + amount);
-      
-      // Store the first original name we encounter for this normalized name
-      if (!originalNameMap.has(normalizedName)) {
-        originalNameMap.set(normalizedName, originalName);
-      }
+      const name = String(row.customer_name || "").trim();
+      if (!name) continue;
+      grouped.set(name, (grouped.get(name) || 0) + Number(row.amount || 0));
     }
 
-    const allCustomers = Array.from(totalsMap.entries())
-      .map(([normalizedName, total]) => ({ 
-        customerName: originalNameMap.get(normalizedName) || normalizedName, 
-        total 
-      }))
-      .filter((item) => item.total !== 0);
+    const aggregated = Array.from(grouped.entries()).map(
+      ([customer_name, total_balance]) => ({ customer_name, total_balance })
+    );
 
-    const customers = allCustomers.filter(c => c.total > 0).sort((a, b) => b.total - a.total);
-    const overpaidCustomers = allCustomers.filter(c => c.total < 0).sort((a, b) => a.total - b.total);
-
-    const grandTotal = customers.reduce((sum, item) => sum + item.total, 0);
-
-    return { customers, overpaidCustomers, grandTotal };
+    return mergePendingRowsByNormalizedName(aggregated);
   } catch (error) {
-    console.error('getAllPendingUdhaar error:', error.message);
+    console.error("getAllPendingUdhaar error:", error.message);
     throw error;
   }
 }
@@ -1066,45 +1103,123 @@ async function getLastEntries({ ownerPhone, limit = 3, customerName = null, ente
 async function searchCustomersByName({ customerName, ownerPhone }) {
   try {
     const normalizedSearch = normalizeCustomerName(customerName);
-    
+    if (!normalizedSearch) {
+      return [];
+    }
+
+    const { data: exactRows, error: exactError } = await supabase
+      .from("customers")
+      .select("id,customer_name,phone_number,normalized_name")
+      .eq("owner_phone", ownerPhone)
+      .eq("normalized_name", normalizedSearch);
+
+    if (exactError) {
+      console.error(
+        "Supabase exact match failed in searchCustomersByName:",
+        exactError.message
+      );
+    } else if (exactRows?.length) {
+      return exactRows;
+    }
+
     const { data, error } = await supabase
       .from("customers")
-      .select("id,customer_name,phone_number")
+      .select("id,customer_name,phone_number,normalized_name")
       .eq("owner_phone", ownerPhone);
 
     if (error) {
-      console.error('Supabase fetch failed in searchCustomersByName:', error.message);
-      throw new Error('Database error. Try again!');
+      console.error("Supabase fetch failed in searchCustomersByName:", error.message);
+      throw new Error("Database error. Try again!");
     }
 
     const matched = (data || []).filter((row) => {
-      const normalizedRow = normalizeCustomerName(row.customer_name);
+      const normalizedRow =
+        row.normalized_name || normalizeCustomerName(row.customer_name);
       return isCustomerMatch(normalizedRow, normalizedSearch);
     });
 
     return matched;
   } catch (error) {
-    console.error('searchCustomersByName error:', error.message);
+    console.error("searchCustomersByName error:", error.message);
     throw error;
   }
 }
 
-async function createCustomer({ customerName, phone = null, ownerPhone }) {
+async function createCustomer({ customerName, phone = null, ownerPhone, shopId = null }) {
   try {
-    const { data, error } = await supabase
-      .from("customers")
-      .insert([{ customer_name: customerName, phone_number: phone, owner_phone: ownerPhone }])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Supabase insert failed in createCustomer:', error.message);
-      throw new Error('Database error. Try again!');
+    const normalized_name = normalizeCustomerName(customerName);
+    if (!normalized_name) {
+      throw new Error("Invalid customer name");
     }
 
-    return data;
+    let resolvedShopId = shopId;
+    if (!resolvedShopId) {
+      const { data: shop } = await supabase
+        .from("registered_shops")
+        .select("id")
+        .eq("owner_phone", ownerPhone)
+        .maybeSingle();
+      resolvedShopId = shop?.id || null;
+    }
+
+    const row = {
+      customer_name: customerName,
+      phone_number: phone,
+      owner_phone: ownerPhone,
+      normalized_name,
+    };
+    if (resolvedShopId) {
+      row.shop_id = resolvedShopId;
+    }
+
+    const conflictKey = resolvedShopId
+      ? "shop_id,normalized_name"
+      : "owner_phone,normalized_name";
+
+    const { data, error } = await supabase
+      .from("customers")
+      .upsert(row, { onConflict: conflictKey, ignoreDuplicates: true })
+      .select("id,customer_name,phone_number,normalized_name")
+      .maybeSingle();
+
+    if (error) {
+      if (error.code === "23505") {
+        const { data: existing, error: findError } = await supabase
+          .from("customers")
+          .select("id,customer_name,phone_number,normalized_name")
+          .eq("owner_phone", ownerPhone)
+          .eq("normalized_name", normalized_name)
+          .maybeSingle();
+
+        if (findError) {
+          console.error("createCustomer fetch after conflict:", findError.message);
+          throw new Error("Database error. Try again!");
+        }
+        if (existing) return existing;
+      }
+      console.error("Supabase upsert failed in createCustomer:", error.message);
+      throw new Error("Database error. Try again!");
+    }
+
+    if (data) {
+      return data;
+    }
+
+    const { data: existing, error: findError } = await supabase
+      .from("customers")
+      .select("id,customer_name,phone_number,normalized_name")
+      .eq("owner_phone", ownerPhone)
+      .eq("normalized_name", normalized_name)
+      .maybeSingle();
+
+    if (findError || !existing) {
+      console.error("createCustomer could not resolve row after upsert");
+      throw new Error("Database error. Try again!");
+    }
+
+    return existing;
   } catch (error) {
-    console.error('createCustomer error:', error.message);
+    console.error("createCustomer error:", error.message);
     throw error;
   }
 }
