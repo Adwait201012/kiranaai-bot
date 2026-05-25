@@ -706,11 +706,11 @@ async function processInboundWebhook(inbound) {
     }
 
 // ── EMPLOYEE JOIN (no shop context required) ─────────────────
-    const joinMatch = text.match(JOIN_REQUEST_RE);
+    const joinMatch = normalizedMsg.match(JOIN_REQUEST_RE);
     if (joinMatch) {
-      const joinCode = joinMatch[1];
+      const joinCode = joinMatch[1].toUpperCase();
       // Extract name from remainder: "Join ABC123 Raju" → name = "Raju"
-      const afterCode = text.slice(text.indexOf(joinCode) + joinCode.length).trim();
+      const afterCode = normalizedMsg.slice(normalizedMsg.indexOf(joinMatch[1]) + joinMatch[1].length).trim();
       let employeeName = afterCode || "";
 
       // If the remainder is empty or just an honorific, no real name given
