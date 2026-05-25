@@ -95,8 +95,8 @@ const HONORIFICS = new Set(["ji", "bhai", "ben", "behen", "didi", "sahab", "sir"
 const JOIN_CODE_TRIGGER_RE =
   /\b(join\s*code|joining\s*code|code\s*do|code\s*bhejo|mera\s*code)\b/i;
 const JOIN_REQUEST_RE = /^join\s+([A-Z0-9]{6})(\s+(.+))?\s*$/i;
-const APPROVE_WITH_PHONE_RE = /^(?:approve|haan)\s+(\+?[1-9]\d{9,14})/i;
-const REJECT_WITH_PHONE_RE = /^(?:reject|nahi)\s+(\+?[1-9]\d{9,14})/i;
+const APPROVE_WITH_PHONE_RE = /^(?:approve|haan)\s+([\+\d\s]+)/i;
+const REJECT_WITH_PHONE_RE = /^(?:reject|nahi)\s+([\+\d\s]+)/i;
 
 /** Strip whatsapp: / quotes so approve/reject regex can match phone numbers */
 function normalizeMessage(msg) {
@@ -271,8 +271,9 @@ async function handleApproveRejectCommands(
   }
 
   const approved = Boolean(approveMatch);
-  const phoneCapture = (approveMatch || rejectMatch)[1];
-  const waEmployeePhone = toWaSenderId(phoneCapture);
+  const rawPhone = (approveMatch || rejectMatch)[1].trim();
+  const cleanPhone = (rawPhone.startsWith("+") ? "+" : "") + rawPhone.replace(/[^\d]/g, "");
+  const waEmployeePhone = toWaSenderId(cleanPhone);
 
   const approval = await handleJoinApproval(ownerWaId, waEmployeePhone, approved);
   if (approval.error) {
