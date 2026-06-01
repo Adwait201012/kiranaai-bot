@@ -150,7 +150,7 @@ function formatError(errorMessage) {
 
   return `Maaf kijiye, grahak ji! ❌
 
-kuch gadbad hui hai: ${errorMessage}
+Kuch gadbad hui hai: ${errorMessage}
 
 👉 ${instruction}
 

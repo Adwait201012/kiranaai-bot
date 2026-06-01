@@ -441,6 +441,7 @@ const TEMPLATES = {
       ITEM_REQUIRED: "Item name required!",
       QUANTITY_REQUIRED: "Quantity required!",
       PHONE_REQUIRED: "Phone number required!",
+      AUDIO_UNCLEAR: "Awaaz saaf nahi aayi, dobara bhejo 🎤",
     }
   },
   english: {
@@ -648,7 +649,7 @@ async function processInboundWebhook(inbound) {
         if (!text || text.length < 2) {
           await sendTextMessage({
             to: ownerWaId,
-            text: getErrorTemplate(language || 'hinglish', 'AUDIO_UNCLEAR')
+            text: getErrorTemplate('hinglish', 'AUDIO_UNCLEAR')
           });
           return;
         }
@@ -673,8 +674,11 @@ async function processInboundWebhook(inbound) {
     text = normaliseTranscript(text, { isVoice });
     const normalizedMsg = normalizeMessage(text);
 
+    // Single DB read — reused by all four session-type checks below.
+    const activeSession = await getSession(ownerWaId);
+
     // ── REGISTER (highest priority — before join, udhaar, Groq) ───
-    const shopNameSession = await getSession(ownerWaId);
+    const shopNameSession = activeSession;
     if (shopNameSession?.session_type === "shop_name") {
       await deleteSession(ownerWaId);
       const pending = shopNameSession.session_data || {};
@@ -815,9 +819,8 @@ async function processInboundWebhook(inbound) {
     }
 
     // ── Large amount confirmation (before Groq) ───────────────────
-    const amountSession = await getSession(ownerWaId);
-    if (amountSession?.session_type === "amount_confirm") {
-      const pendingAmount = amountSession.session_data || {};
+    if (activeSession?.session_type === "amount_confirm") {
+      const pendingAmount = activeSession.session_data || {};
       const reply = text.trim().toLowerCase();
 
       if (reply === "haan" || reply === "yes") {
@@ -855,8 +858,7 @@ async function processInboundWebhook(inbound) {
     // ── RESET_DATA confirmation check ──────────────────────────────
     // If this user has a pending delete confirmation, check their reply
     // BEFORE running Groq intent detection.
-    const deleteSessionRow = await getSession(ownerWaId);
-    if (deleteSessionRow?.session_type === "delete_confirmation") {
+    if (activeSession?.session_type === "delete_confirmation") {
       const deleteOwnerErr = ownerOnly(shopContext, "sabka data delete");
       if (deleteOwnerErr) {
         await deleteSession(ownerWaId);
@@ -864,18 +866,9 @@ async function processInboundWebhook(inbound) {
         return;
       }
 
-      const pending = deleteSessionRow.session_data || {};
+      const pending = activeSession.session_data || {};
       await deleteSession(ownerWaId); // always clear, one-shot
-
-      // Session TTL check must use created_at < now() - interval '10 minutes'
-      const isExpired = new Date(deleteSessionRow.created_at) < new Date(Date.now() - 10 * 60 * 1000);
-      if (isExpired) {
-        await sendTextMessage({
-          to: ownerWaId,
-          text: getTemplate(pending.language || 'hinglish', 'RESET_CANCEL')
-        });
-        return;
-      }
+      // Note: getSession() already returns null for expired sessions, so no TTL check needed here.
 
       const upperText = text.toUpperCase().trim();
       if (DELETE_CONFIRM_PHRASES.has(upperText)) {
@@ -911,9 +904,8 @@ async function processInboundWebhook(inbound) {
     let aiResult;
     
     // ── DISAMBIGUATION check ──────────────────────────────
-    const disambigSession = await getSession(ownerWaId);
-    if (disambigSession?.session_type === "disambiguation") {
-      const session = disambigSession.session_data || {};
+    if (activeSession?.session_type === "disambiguation") {
+      const session = activeSession.session_data || {};
       await deleteSession(ownerWaId);
 
       if (Date.now() - (session.timestamp || 0) <= SESSION_TTL_MS) {

@@ -751,7 +751,7 @@ async function getInventoryStock({ itemName, ownerPhone }) {
       .maybeSingle();
 
     if (ilikeError) {
-      console.error('Supabase fetch failed:', ilikeError.length);
+      console.error('Supabase fetch failed:', ilikeError.message);
       throw new Error('Database error. Try again!');
     }
 
